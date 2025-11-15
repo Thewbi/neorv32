@@ -268,11 +268,12 @@ TODO: changes for debugging alu operations and alu_inc
 # Writing an application that uses the new instruction
 
 Next, we need to create machine code that we can copy into rtl\core\neorv32_application_image.vhd
-because this is the ROM that is synthesized into the NEORV32 CPU for simulating.
+because this is the ROM that is synthesized into the NEORV32 CPU for simulating and the NEORV32
+processor will execute the code stored in this ROM when the simulation starts.
 
 ## Strategies for Writing Applications
 
-In order to create machine code, there is a quick and dirty way and a the standard approach.
+In order to create machine code, there is a quick and dirty way and a standard approach.
 
 The quick and dirty way is to assemble your machine code by hand according to the RISC-V encoding
 defined in the RISC-V non priviledged specification. Then paste you machine code into 
@@ -287,26 +288,34 @@ The examples use a Makefile in each of the example folders which sets flags and 
 the common Makefile which is used for all examples. The common makefile is sw\common\common.mk
 
 Inside the common.mk makefile, all the targets are defined. A target is a certain function that
-you can achieve using the buid system. One target is the 'all' target which performs all build
+you can execute using the build system. One target is the 'all' target which performs all build
 steps. You trigger a target by adding it as a parameter to the make command.
 
-The makefiles internally use the RISC-V GNU GCC toolchain to build machine code. A toolchain
+```
+make all
+```
+
+The makefiles uses the RISC-V GNU GCC toolchain to build machine code. A toolchain
 is a term for a set of tools that you can use for compiling higher languages into assemly (gcc) 
 and for turning the assembly into machine code (as). Also tools that decompile output files back to
-assembly are available (objdump).
+assembly are available (objdump). The toolchain contains a plethora of tools that I have never even
+used yet! It is worthwhile to familiarize yourself with the applications available inside the
+toolchain's bin folder to become a better developer if you are interested in open source development.
 
 The RISC-V GNU GCC toolchain that we will be using is going to be a toolchain for cross compiling.
 Cross compiling is when the toolchain outputs machine code that the system on which the tools are
-executed, cannot run. In our case, you will most likely (we assume) be working on a x86 or a ARM
+executed, cannot run. Instead we use one computer system to write code for another computer system.
+
+In our case, you will most likely (we assume) be working on a x86 or a ARM
 system. Your target is RISC-V for the NEORV32. With that, you are going to need a cross compiler
 toolchain. FYI, native toolchains produce machine code for the architecture that also runs the 
 toolchain itself.
 
 ## Setup the toolchain and the build environment
 
-The NEORV32 repository does not come with the cross compiler toolchain prepackaged. Download a
-precompied gcc toolchain from https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/
-and from the release pack of the xpack project: https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases
+The NEORV32 repository does not come with the cross compiler toolchain prepackaged. Therefore download a
+precompiled gcc toolchain from https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/
+more precicesly from the release page of the xpack project: https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases
 
 Next, install Msys2 if you have not already and open a Msys2 64 bit console.
 Inside the console, export the *NEORV32_HOME* environment variable.
@@ -315,13 +324,16 @@ Inside the console, export the *NEORV32_HOME* environment variable.
 NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
 ```
 
+Adjust the paths to your local situation. Copy and pasting my paths from this tutorial without
+adjustments would be a mistake!
+
 Also add the toolchain's bin folder to the PATH environment variable
 
 ```
 PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
 ```
 
-Enter a software example folder.
+Enter one of the software example folders.
 
 ```
 cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/demo_cfu
@@ -369,8 +381,9 @@ Installing application image to ../../../rtl/core/neorv32_application_image.vhd
 
 One important output file is the .elf file. .elf stands for executable and linkable format.
 .elf files may contain executable applications and also libraries that can be
-linked to become part of applications. .elf is used by linux to transfer machine code
-from the harddrive into RAM for execution in a new process.
+linked to become part of applications. .elf is used by Linux to transfer machine code
+from the harddrive into RAM for execution in a new process. The respective file format
+on windows would be the PE file format. The GCC toolchain cannot create PE files.
 
 NEORV32 does not use the .elf file but the cross compile toolchain contains the 
 objdump tool which extracts RISC-V assembly code from the .elf file. This is important
@@ -427,8 +440,13 @@ C-programming language. C has a C-runtime which is a set all functions that solv
 common problems such as strlen() but also acts as a layer that ports the C language 
 to a target by implementing memory handling through malloc() and free() for example.
 
+Some of the C-runtime functions are provided by the compiler which means it is 
+provided by the gcc cross compiler toolchain. To initialize the C-runtime, a assembly
+file from the NEORV32 repostory is used. This means this file is not part of the
+cross compiler toolchain! You can see that the entire software system is rather complex.
+
 In order for this layer of C-runtime to work, it needs to be initialized. This means
-that some sections or RAM are filled with certain values so that all variable used
+that some sections of RAM are filled with certain values so that all variable used
 by the C-runtimes have valid values. Before main() is executed, the application starts
 with the initialization of the C-runtime, then jumps to the main() function.
 
@@ -565,7 +583,7 @@ Disassembly of section .text:
      180:	1c448493          	addi	s1,s1,452 # 1340 <__fini_array_end>
 ```
 
-Disclaimer: I do not pretend to understand exactly what is happening here in all details. 
+Disclaimer: I do not pretend to understand exactly what is happening here in all detail. 
 
 Let's check the most important parts. 
 
@@ -586,13 +604,15 @@ lines earlier.
 
 At the very beginning, at address 0x00000000, we find the code contained in 
 the sw\common\crt0.S file. crt stands for C-runtime. This means this assembly
-file contains all the C-runtime initialization.
+file contains all the C-runtime initialization. Remark: This file is provided
+by the NEORV32 repository and not by the cross compiler toolchain for some reason.
 
 This means that the crt0.s file is linked into the executable at the beginning
 of the address space.
 
 It is easier to read the original assembly code than to read the disassembled
-assembly so let's look at the crt0.s.
+assembly because the original source file contains human readable symbols and 
+comments. So let's look at the crt0.s instead of the disassembly listing.
 
 Here is a excerpt from sw\common\crt0.S
 
@@ -661,31 +681,41 @@ user mode which is not privileged.
 
 In machine mode, interrupts are turned off.
 
-Then register are initalized. Some register get addresses loaded with the la instructions.
+Then the registers are initalized. Some registers get addresses loaded with the la instruction.
 The rest of the registers are set to 0. Interestingly, the compiler does even respect
 the embedded variant of RISC-V since it will stop initializing registers after x15 
-if the symbol __riscv_32e is defined, because the embeddeded variants of RISC-V only 
-have the first 16 registers as opposed to all 32 registers!
+if the symbol __riscv_32e is defined, because the embedded variants of RISC-V only 
+contain the first 16 registers as opposed to all 32 registers!
 
-Next, the system will check if it is run on the first hart which has the hart id 0 or not.
-Depending on the current hart, the same application will perform different steps.
+## Symmetric Multi Processing, Hart 0 Check
+
+Firstly, RISC-V, like any other multi processor system, will run the software on all harts.
+To give the user full control over what the harts do, the C-runtime contains code that
+puts harts to sleep. Next follows the explanation how this is accomplished.
+
+The system software will check if it is run on the first hart which has the hart id 0.
+Depending on the current hart id, the same application will show different behaviour!
 
 As is the habit on multi core systems, system-software will start executing on all cores but
-it will keep running on core 0 only. 
-For the rest of the cores, the system software is executed for a very short time until it
-hits the core 0 check. It will fail the core 0 check and it will then pend on a software interrupt. 
-This means that all cores other than core 0 will pend. Pending means that they will go 
-to sleep until the software interrupt is triggered to wake up the cores. 
+it will keep running on core 0 only!
 
-The system software running on core 0 may decide to wake up the cores or it may decide 
+For the rest of the cores, the system software is executed for a very short time until it
+hits the core 0 check. It will fail the core 0 check on other harts and it will then pend 
+on a software interrupt. 
+
+This means that all cores other than core 0 will pend. Pending means that they will go 
+to sleep until the software interrupt is triggered to wake up those cores. 
+
+The system software running on core 0 may decide to wake up the other cores or it may decide 
 to let the cores sleep which effectively turns the multi-core system into a single-core system.
 
 > Prithee lull the Old one back to it's ancient slumber
 
 *The maiden, Demon's Souls by FromSoft / Bandai Namco*
 
-Here is the code that makes the harts sleep:
 SMP stands for symetric multi processing.
+
+Here is the code that makes the harts sleep:
 
 ```
 // ************************************************************************************************
@@ -717,10 +747,25 @@ __crt0_smp_primary:
 ```
 
 We can see that the beqz command (Branch equal zero) will skip the entire sleep code on hart 0
-since each core will store it's id into x1 as we have analyzed earlier.
+since each core will store it's id into x1 as we have analyzed earlier. This is why the register
+x1 is used for the core 0 check.
 
-Long story short, the take away is that your average hello world application will only
-run on hart 0 only because usually example applications will not wake up the other cores.
+## Summary
+
+Lets provide a small summary of the points discussed so far.
+
+We have setup the toolchain and we have compiled one of the example applications.
+
+Instead of immediately starting with the code in the main() function, the C-runtime is
+initialized first. After initializing stack and global pointers and registers, a core
+0 check is performed and the system software pends on all cores othe than hart 0. The
+system software on hart 0 has the power to wake up the other cores how it sees fit.
+A single threaded application is created when the other cores are not woken up.
+
+The take away is that your average hello world application will only
+run on hart 0 because usually example applications will not wake up the other cores
+by triggering software interrupts.
+
 All other harts will sleep. The simulation of the NEORV32 will only show activity on hart 0.
 You should not expect any activity on the other cores unless you trigger the software interrupt
 to wake up the other harts.
