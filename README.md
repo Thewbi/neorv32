@@ -43,7 +43,7 @@ The CPU is simulated for the real-time period specified via
 the --stop-time parameter. The simulation takes much longer than
 the specified real time period. It is probably smart to first
 try with 20us instead of 20ms. 20ns is not enough to get the 
-CPU processing relevant data.
+CPU to process relevant data.
 
 # Execution Engine
 
@@ -105,8 +105,8 @@ neorv32_cpu.vhd
         ...
 
         -- [debug] - make instruction visible
-        wbi_valid_i   => frontend.valid,       -- bus signals are valid
-        wbi_instr_i   => frontend.instr,       -- instruction
+        debug_valid_i   => frontend.valid,       -- bus signals are valid
+        debug_instr_i   => frontend.instr,       -- instruction
 
         ...
 
@@ -125,8 +125,8 @@ entity neorv32_cpu_control is
         ...
 
         -- [debug] - make instruction visible
-        wbi_valid_i   : in std_ulogic;                          -- bus signals are valid
-        wbi_instr_i   : in std_ulogic_vector(31 downto 0);      -- instruction
+        debug_valid_i   : in std_ulogic;                          -- bus signals are valid
+        debug_instr_i   : in std_ulogic_vector(31 downto 0);      -- instruction
 
         ...
 
@@ -138,10 +138,21 @@ GHDL will output the following trace:
 
 ![image info](res/images/DebuggingInstructions.png)
 
-This trace shows that the frontend prefetches instructions in non-intuitive ways. For example the compressed instruction 0x00002b27 is fetched, then 0x80028293 is fetched and then 0x00002b27 is fetched again!
+REMARK: The surfer trace viewer (https://surfer-project.org/) is used 
+in the image above.
 
-The execution engine is displayed in the lower traces thanks to the debug-signals inserted above.
+This trace shows that the frontend prefetches instructions in non-intuitive 
+ways. For example the compressed instruction 0x00002b27 is fetched, then 
+0x80028293 is fetched and then 0x00002b27 is fetched again!
 
-The instr traces contains the instruction that the execution engine sees and the valid trace dictates if the execution engine is triggered to consume the instruction. If the valid signal is low, the execution engine ignores the instruction.
+The execution engine is displayed in the lower traces thanks to the 
+debug-signals inserted above.
 
-The execution engine traces show which instructions are executed by the CPU.
+The *debug_instr* trace contains the instruction that the execution engine 
+sees and the *debug_valid* trace dictates if the execution engine is triggered 
+to consume the instruction. If the valid signal is low, the execution engine
+ignores the instruction.
+
+The execution engine traces show which instructions are executed by the CPU. 
+For example the second fetch of the compressed instruction 0x00002b27 is ignored
+by the execution engine as the *debug_valid* signal is low.
