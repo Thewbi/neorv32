@@ -750,6 +750,28 @@ We can see that the beqz command (Branch equal zero) will skip the entire sleep 
 since each core will store it's id into x1 as we have analyzed earlier. This is why the register
 x1 is used for the core 0 check.
 
+The sleep code jumps to the __crt0_sleep label for sleeping. When the interrupt wakes up the 
+core, the code returns on the __crt0_smp_wakeup label. Eventually, the sleep code will jump
+to the __crt0_main_entry symbol. From the __crt0_main_entry, the main() function is called.
+This means that system software on the other harts will start executing the same main function
+as hart 0 does eventually after wakeup.
+
+```
+// ************************************************************************************************
+// Setup arguments and call main function.
+// ************************************************************************************************
+  la    x12, main             // primary core's (core0) entry point (#1169)
+__crt0_main_entry:
+  la    x3, __global_pointer  // re-initialize global pointer "gp" (to prevent a race condition during SMP boot)
+  fence                       // synchronize loads/stores
+  fence.i                     // synchronize instruction fetch
+
+  csrw  mstatus, x5           // re-initialize
+  addi  x10, zero, 0          // x10 = a0 = argc = 0
+  addi  x11, zero, 0          // x11 = a1 = argv = 0
+  jalr  x1, x12               // call actual main function; put return address in ra
+```
+
 ## Summary
 
 Lets provide a small summary of the points discussed so far.
