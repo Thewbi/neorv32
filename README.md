@@ -61,7 +61,7 @@ The instruction from the frontend enters the execution engine during
 the EX_DISPATCH microcode step. The exe_engine_nxt signal is used
 to store the instruction. Also the Program Counter (PC) is updated.
 
-```
+```VHDL
 exe_engine_nxt.ir    <= frontend_i.instr;                         -- instruction word
 exe_engine_nxt.pc    <= exe_engine.pc2(XLEN-1 downto 1) & '0';    -- PC <= next PC
 ```
@@ -91,9 +91,9 @@ them to the .vcd file.
 
 Making these changes:
 
-neorv32_cpu.vhd 
+*rtl\core\neorv32_cpu.vhd*
 
-```
+```VHDL
   -- Control Unit (Back-End / Instruction Execution) ----------------------------------------
   -- -------------------------------------------------------------------------------------------
   neorv32_cpu_control_inst: entity neorv32.neorv32_cpu_control
@@ -113,9 +113,9 @@ neorv32_cpu.vhd
     );
 ```
 
-neorv32_cpu_control.vhd
+*rtl\core\neorv32_cpu_control.vhd*
 
-```
+```VHDL
 entity neorv32_cpu_control is
     generic (
         ...
@@ -156,3 +156,576 @@ ignores the instruction.
 The execution engine traces show which instructions are executed by the CPU. 
 For example the second fetch of the compressed instruction 0x00002b27 is ignored
 by the execution engine as the *debug_valid* signal is low.
+
+# Adding custom instructions
+
+Lets add a custom instruction to the NEORV32 RISC-V CPU.
+
+## Select the Mnemonic
+
+The RV32I instructions and their encoding is defined on page 586 of the unprivileged
+RISC-V specification.
+
+![image info](res/images/RV32_Instructions.png)
+
+Lets mimic the add instruction and instead of adding two registers, add the 
+first register value to the second register value and on top of that add the 
+constant value 1 to the result.
+
+Lets mimic the add instruction and instead of adding two registers, add the 
+first register to itself.
+
+Or count the number of bits that are set to 1 in an immediate and return that
+count into the target register.
+
+```
+add1 rd, rs1, rs2
+```
+
+add1 will perform the operation 
+
+```
+rd = rs1 + rs2 + 1
+```
+
+## Select the Encoding
+
+The encoding of add is R-Type because it is a register (R) instruction.
+
+| component | value | remark |
+| --------- | ----- | -------------- |
+| opcode    | 0b0110011 | lowest two bits are 11 because this is not a compressed instruction |
+| funct7    | 0b0000000 | |
+| funct3    | 0b000 | |
+
+The opcode 0b0110011 is defined to be an ALU-operation within the NEORV32 source code.
+
+*rtl\core\neorv32_package.vhd*
+
+```VHDL
+constant opcode_alu_c    : std_ulogic_vector(6 downto 0) := "0110011"; -- ALU operation
+```
+
+In general, func3 is used to control the operation that the ALU will perform. The ALU can
+add and subtract (whereas subtraction is an addition with an sign-inverted/negated operand),
+shift left or right, XOR, OR and AND.
+
+Amongst the ALU operations, a func3 value of 0b000 is defined to be a sub or a add ALU-operation.
+
+```VHDL
+constant funct3_sadd_c   : std_ulogic_vector(2 downto 0) := "000"; -- sub/add
+```
+
+Which leaves us with funct7 for adding codes for custom instructions.
+
+funct7 of 0b0000000 is used for add. funct7 of 0b0100000 is used for sub.
+
+Note that the second highest bit is what activates subtraction inside the NEORV32 execution engine:
+
+*rtl\core\neorv32_cpu_control.vhd*
+```VHDL
+-- addition/subtraction control --
+if (funct3_v(2 downto 1) = funct3_slt_c(2 downto 1)) or -- SLT(I), SLTU(I)
+    ((funct3_v = funct3_sadd_c) and (opcode(5) = '1') and (exe_engine.ir(instr_funct7_msb_c-1) = '1')) then -- SUB
+    ctrl_nxt.alu_sub <= '1';
+end if;
+```
+
+This means, any funct7 with the scond highest bit set is not of use for the add1 instruction.
+
+Let's use funct7 of 0b1000000 for add1.
+
+## Extending the Exection Engine Microcode
+
+Next, since the Execution Engine checks instructions before executing them, we need to add the add1 instruction to the check.
+
+*rtl\core\neorv32_cpu_control.vhd*
+
+```VHDL
+-- is base rv32i/e ALU[I] instruction (excluding shifts)? --
+if ((opcode(5) = '0') and (funct3_v /= funct3_sll_c) and (funct3_v /= funct3_sr_c)) or -- base ALUI instruction (excluding SLLI, SRLI, SRAI)
+    ((opcode(5) = '1') and (((funct3_v = funct3_sadd_c) and (funct7_v = "0000000")) or -- add
+                            ((funct3_v = funct3_sadd_c) and (funct7_v = "0100000")) or -- sub
+                            ((funct3_v = funct3_sadd_c) and (funct7_v = "1000000")) or -- add1
+                            ((funct3_v = funct3_slt_c)  and (funct7_v = "0000000")) or 
+                            ((funct3_v = funct3_sltu_c) and (funct7_v = "0000000")) or
+                            ((funct3_v = funct3_xor_c)  and (funct7_v = "0000000")) or 
+                            ((funct3_v = funct3_or_c)   and (funct7_v = "0000000")) or
+                            ((funct3_v = funct3_and_c)  and (funct7_v = "0000000")))) then -- base ALU instruction (excluding SLL, SRL, SRA)
+    ctrl_nxt.rf_wb_en    <= '1'; -- valid RF write-back (won't happen if exception)
+    exe_engine_nxt.state <= EX_DISPATCH;
+else -- [NOTE] illegal ALU[I] instructions are handled as multi-cycle operations that will time-out as no ALU co-processor responds
+    ctrl_nxt.alu_cp_alu  <= '1'; -- trigger ALU[I] opcode-space co-processor
+    exe_engine_nxt.state <= EX_ALU_WAIT;
+end if;
+```
+
+In the listing above, a line for the add1 instruction has been added to the check.
+
+TODO: changes for add1
+TODO: changes for debugging alu operations and alu_inc
+
+# Writing an application that uses the new instruction
+
+Next, we need to create machine code that we can copy into rtl\core\neorv32_application_image.vhd
+because this is the ROM that is synthesized into the NEORV32 CPU for simulating.
+
+## Strategies for Writing Applications
+
+In order to create machine code, there is a quick and dirty way and a the standard approach.
+
+The quick and dirty way is to assemble your machine code by hand according to the RISC-V encoding
+defined in the RISC-V non priviledged specification. Then paste you machine code into 
+rtl\core\neorv32_application_image.vhd
+
+## The Standard Approach using a Toolchain and Makefiles
+
+The standard approach is to follow the structure outlined in the examples located inside the
+sw\example folder.
+
+The examples use a Makefile in each of the example folders which sets flags and then includes
+the common Makefile which is used for all examples. The common makefile is sw\common\common.mk
+
+Inside the common.mk makefile, all the targets are defined. A target is a certain function that
+you can achieve using the buid system. One target is the 'all' target which performs all build
+steps. You trigger a target by adding it as a parameter to the make command.
+
+The makefiles internally use the RISC-V GNU GCC toolchain to build machine code. A toolchain
+is a term for a set of tools that you can use for compiling higher languages into assemly (gcc) 
+and for turning the assembly into machine code (as). Also tools that decompile output files back to
+assembly are available (objdump).
+
+The RISC-V GNU GCC toolchain that we will be using is going to be a toolchain for cross compiling.
+Cross compiling is when the toolchain outputs machine code that the system on which the tools are
+executed, cannot run. In our case, you will most likely (we assume) be working on a x86 or a ARM
+system. Your target is RISC-V for the NEORV32. With that, you are going to need a cross compiler
+toolchain. FYI, native toolchains produce machine code for the architecture that also runs the 
+toolchain itself.
+
+## Setup the toolchain and the build environment
+
+The NEORV32 repository does not come with the cross compiler toolchain prepackaged. Download a
+precompied gcc toolchain from https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/
+and from the release pack of the xpack project: https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases
+
+Next, install Msys2 if you have not already and open a Msys2 64 bit console.
+Inside the console, export the *NEORV32_HOME* environment variable.
+
+```
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
+```
+
+Also add the toolchain's bin folder to the PATH environment variable
+
+```
+PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
+```
+
+Enter a software example folder.
+
+```
+cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/demo_cfu
+```
+
+Next let the makefile check if the cross compiling toolchain is setup correctly.
+To do this, execute the check target.
+
+```
+make check
+```
+
+The output should be 'Toolchain check OK'. The check target will also compile the
+image_gen tool. The image_gen tool produces new neorv32_application_image.vhd files.
+
+The next step will be to compile the example.
+
+## Compiling
+
+```
+make all
+```
+
+The 'all' target creates the machine code, stores the machine code into several file
+formats. It also generates a new neorv32_application_image.vhd and copies it
+into the VHDL source code folder so you can immedately start a simulation with the
+new code.
+
+```
+$ make all
+Memory utilization:
+   text    data     bss     dec     hex filename
+   6324       0    1292    7616    1dc0 main.elf
+Generating neorv32_exe.bin
+Executable size in bytes:
+6336
+Generating neorv32_raw_exe.hex
+Generating neorv32_raw_exe.bin
+Generating neorv32_raw_exe.coe
+Generating neorv32_raw_exe.mem
+Generating neorv32_raw_exe.mif
+Generating neorv32_application_image.vhd
+Installing application image to ../../../rtl/core/neorv32_application_image.vhd
+```
+
+One important output file is the .elf file. .elf stands for executable and linkable format.
+.elf files may contain executable applications and also libraries that can be
+linked to become part of applications. .elf is used by linux to transfer machine code
+from the harddrive into RAM for execution in a new process.
+
+NEORV32 does not use the .elf file but the cross compile toolchain contains the 
+objdump tool which extracts RISC-V assembly code from the .elf file. This is important
+for use here since the original source code of the example is written in C but we
+want to analyze the application in assembly code in the following.
+
+Convert the .elf file into an assembly listing:
+
+```
+riscv-none-elf-objdump --disassemble main.elf > listing.asm
+```
+
+## Analysing the Assembly Listing
+
+The assembly listing is ridiculously large. The most important function is the
+main function because it contains the actual source code that the user has written
+using the C programming language. Basically this is the payload that the user is
+interested in.
+
+```
+00000334 <main>:
+     334:	fc010113          	addi	sp,sp,-64
+     338:	02112e23          	sw	ra,60(sp)
+     33c:	02812c23          	sw	s0,56(sp)
+     340:	02912a23          	sw	s1,52(sp)
+     344:	03212823          	sw	s2,48(sp)
+     348:	03312623          	sw	s3,44(sp)
+     34c:	03412423          	sw	s4,40(sp)
+     350:	03512223          	sw	s5,36(sp)
+     354:	03612023          	sw	s6,32(sp)
+     358:	091000ef          	jal	be8 <neorv32_rte_setup>
+     35c:	fff50537          	lui	a0,0xfff50
+     360:	0f1000ef          	jal	c50 <neorv32_uart_available>
+     364:	1e050463          	beqz	a0,54c <main+0x218>
+     368:	000055b7          	lui	a1,0x5
+     36c:	00000613          	li	a2,0
+     370:	b0058593          	addi	a1,a1,-1280 # 4b00 <__neorv32_rom_size+0xb00>
+     374:	fff50537          	lui	a0,0xfff50
+     378:	115000ef          	jal	c8c <neorv32_uart_setup>
+     37c:	000015b7          	lui	a1,0x1
+     380:	34058593          	addi	a1,a1,832 # 1340 <__fini_array_end>
+     384:	fff50537          	lui	a0,0xfff50
+     388:	419000ef          	jal	fa0 <neorv32_uart_printf>
+     38c:	000015b7          	lui	a1,0x1
+
+     ...
+```
+
+The main function is not the first set of instructions that are executed! 
+Instead, the application starts with initializing the C-runtime first.
+
+The instructions mainly come from the code that the toolchain generates for the 
+C-programming language. C has a C-runtime which is a set all functions that solve 
+common problems such as strlen() but also acts as a layer that ports the C language 
+to a target by implementing memory handling through malloc() and free() for example.
+
+In order for this layer of C-runtime to work, it needs to be initialized. This means
+that some sections or RAM are filled with certain values so that all variable used
+by the C-runtimes have valid values. Before main() is executed, the application starts
+with the initialization of the C-runtime, then jumps to the main() function.
+
+crt stands for C-runtime.
+
+## Initializing the C-runtime
+
+Let's look at the disassembly for the C runtime initialization.
+
+```
+
+main.elf:     file format elf32-littleriscv
+
+
+Disassembly of section .text:
+
+00000000 <__crt0_entry>:
+       0:	f14020f3          	csrr	ra,mhartid
+       4:	80002217          	auipc	tp,0x80002
+       8:	ffb20213          	addi	tp,tp,-5 # 80001fff <__crt0_ram_last>
+       c:	ff027113          	andi	sp,tp,-16
+      10:	80000197          	auipc	gp,0x80000
+      14:	7f018193          	addi	gp,gp,2032 # 80000800 <__global_pointer>
+      18:	000022b7          	lui	t0,0x2
+      1c:	80028293          	addi	t0,t0,-2048 # 1800 <_ctype_+0x50>
+      20:	30029073          	csrw	mstatus,t0
+      24:	00000317          	auipc	t1,0x0
+      28:	18030313          	addi	t1,t1,384 # 1a4 <__crt0_trap>
+      2c:	30531073          	csrw	mtvec,t1
+      30:	30401073          	csrw	mie,zero
+      34:	00002397          	auipc	t2,0x2
+      38:	88038393          	addi	t2,t2,-1920 # 18b4 <__crt0_copy_data_src_begin>
+      3c:	80000417          	auipc	s0,0x80000
+      40:	fc440413          	addi	s0,s0,-60 # 80000000 <time_dec_sw>
+      44:	80000497          	auipc	s1,0x80000
+      48:	fbc48493          	addi	s1,s1,-68 # 80000000 <time_dec_sw>
+      4c:	80000517          	auipc	a0,0x80000
+      50:	fb450513          	addi	a0,a0,-76 # 80000000 <time_dec_sw>
+      54:	80000597          	auipc	a1,0x80000
+      58:	4b858593          	addi	a1,a1,1208 # 8000050c <__crt0_bss_end>
+      5c:	00000613          	li	a2,0
+      60:	00000693          	li	a3,0
+      64:	00000713          	li	a4,0
+      68:	00000793          	li	a5,0
+      6c:	00000813          	li	a6,0
+      70:	00000893          	li	a7,0
+      74:	00000913          	li	s2,0
+      78:	00000993          	li	s3,0
+      7c:	00000a13          	li	s4,0
+      80:	00000a93          	li	s5,0
+      84:	00000b13          	li	s6,0
+      88:	00000b93          	li	s7,0
+      8c:	00000c13          	li	s8,0
+      90:	00000c93          	li	s9,0
+      94:	00000d13          	li	s10,0
+      98:	00000d93          	li	s11,0
+      9c:	00000e13          	li	t3,0
+      a0:	00000e93          	li	t4,0
+      a4:	00000f13          	li	t5,0
+      a8:	00000f93          	li	t6,0
+
+000000ac <__crt0_smp_check>:
+      ac:	02008a63          	beqz	ra,e0 <__crt0_smp_primary>
+      b0:	00000797          	auipc	a5,0x0
+      b4:	01878793          	addi	a5,a5,24 # c8 <__crt0_smp_wakeup>
+      b8:	30579073          	csrw	mtvec,a5
+      bc:	30446073          	csrsi	mie,8
+      c0:	30046073          	csrsi	mstatus,8
+      c4:	0d80006f          	j	19c <__crt0_sleep>
+
+000000c8 <__crt0_smp_wakeup>:
+      c8:	fff44737          	lui	a4,0xfff44
+      cc:	00872103          	lw	sp,8(a4) # fff44008 <__crt0_ram_last+0x7ff42009>
+      d0:	00c72603          	lw	a2,12(a4)
+      d4:	fff40737          	lui	a4,0xfff40
+      d8:	00072223          	sw	zero,4(a4) # fff40004 <__crt0_ram_last+0x7ff3e005>
+      dc:	05c0006f          	j	138 <__crt0_main_entry>
+
+000000e0 <__crt0_smp_primary>:
+      e0:	00838e63          	beq	t2,s0,fc <__crt0_bss_clear>
+
+000000e4 <__crt0_data_copy>:
+      e4:	00945c63          	bge	s0,s1,fc <__crt0_bss_clear>
+      e8:	0003a783          	lw	a5,0(t2)
+      ec:	00f42023          	sw	a5,0(s0)
+      f0:	00438393          	addi	t2,t2,4
+      f4:	00440413          	addi	s0,s0,4
+      f8:	fedff06f          	j	e4 <__crt0_data_copy>
+
+000000fc <__crt0_bss_clear>:
+      fc:	00b55863          	bge	a0,a1,10c <__crt0_bss_clear_end>
+     100:	00052023          	sw	zero,0(a0)
+     104:	00450513          	addi	a0,a0,4
+     108:	ff5ff06f          	j	fc <__crt0_bss_clear>
+
+0000010c <__crt0_bss_clear_end>:
+     10c:	00001417          	auipc	s0,0x1
+     110:	23440413          	addi	s0,s0,564 # 1340 <__fini_array_end>
+     114:	00001497          	auipc	s1,0x1
+     118:	22c48493          	addi	s1,s1,556 # 1340 <__fini_array_end>
+
+0000011c <__crt0_constructors>:
+     11c:	00945a63          	bge	s0,s1,130 <__crt0_constructors_end>
+     120:	00042083          	lw	ra,0(s0)
+     124:	000080e7          	jalr	ra
+     128:	00440413          	addi	s0,s0,4
+     12c:	ff1ff06f          	j	11c <__crt0_constructors>
+
+00000130 <__crt0_constructors_end>:
+     130:	00000617          	auipc	a2,0x0
+     134:	20460613          	addi	a2,a2,516 # 334 <main>
+
+00000138 <__crt0_main_entry>:
+     138:	80000197          	auipc	gp,0x80000
+     13c:	6c818193          	addi	gp,gp,1736 # 80000800 <__global_pointer>
+     140:	0ff0000f          	fence
+     144:	0000100f          	fence.i
+     148:	30029073          	csrw	mstatus,t0
+     14c:	00000513          	li	a0,0
+     150:	00000593          	li	a1,0
+     154:	000600e7          	jalr	a2
+
+00000158 <__crt0_main_exit>:
+     158:	30401073          	csrw	mie,zero
+     15c:	34051073          	csrw	mscratch,a0
+     160:	00000517          	auipc	a0,0x0
+     164:	04450513          	addi	a0,a0,68 # 1a4 <__crt0_trap>
+     168:	30551073          	csrw	mtvec,a0
+     16c:	f1402473          	csrr	s0,mhartid
+     170:	02041463          	bnez	s0,198 <__crt0_destructors_end>
+     174:	00001417          	auipc	s0,0x1
+     178:	1cc40413          	addi	s0,s0,460 # 1340 <__fini_array_end>
+     17c:	00001497          	auipc	s1,0x1
+     180:	1c448493          	addi	s1,s1,452 # 1340 <__fini_array_end>
+```
+
+Disclaimer: I do not pretend to understand exactly what is happening here in all details. 
+
+Let's check the most important parts. 
+
+Firstly, when the C-runtime is done initializing, it calls the main() function.
+
+```
+154:	000600e7          	jalr	a2
+```
+
+The register a2 has been loaded with the address of the main() function a few
+lines earlier.
+
+```
+00000130 <__crt0_constructors_end>:
+     130:	00000617          	auipc	a2,0x0
+     134:	20460613          	addi	a2,a2,516 # 334 <main>
+```
+
+At the very beginning, at address 0x00000000, we find the code contained in 
+the sw\common\crt0.S file. crt stands for C-runtime. This means this assembly
+file contains all the C-runtime initialization.
+
+This means that the crt0.s file is linked into the executable at the beginning
+of the address space.
+
+It is easier to read the original assembly code than to read the disassembled
+assembly so let's look at the crt0.s.
+
+Here is a excerpt from sw\common\crt0.S
+
+```
+// ************************************************************************************************
+// Register setup.
+// ************************************************************************************************
+.option push
+.option norelax
+  csrr  x1, mhartid                     // get ID of this core
+
+  la    x4, __crt0_ram_last             // last address of RAM, stack pointer (sp) starts here
+  andi  x2, x4, 0xfffffff0              // align stack to 16-bytes according to the RISC-V ABI (#1021)
+  la    x3, __global_pointer            // global pointer "gp"
+
+  li    x5, 0x00001800                  // mstatus.mpp = machine-mode
+  csrw  mstatus, x5
+  la    x6, __crt0_trap                 // configure early-boot trap handler
+  csrw  mtvec, x6
+  csrw  mie, zero                       // disable all interrupt sources
+
+  la    x7,  __crt0_copy_data_src_begin // .data: start of copy-source (in .rodata)
+  la    x8,  __crt0_copy_data_dst_begin // .data: start of actual data region
+  la    x9,  __crt0_copy_data_dst_end   // .data: end of actual data region
+  la    x10, __crt0_bss_start           // .bss: start address
+  la    x11, __crt0_bss_end             // .bss: end address (not part of bss)
+.option pop
+
+  // initialize remaining registers
+  addi  x12, zero, 0
+  addi  x13, zero, 0
+  addi  x14, zero, 0
+  addi  x15, zero, 0
+#ifndef __riscv_32e
+  addi  x16, zero, 0
+  addi  x17, zero, 0
+  addi  x18, zero, 0
+  addi  x19, zero, 0
+  addi  x20, zero, 0
+  addi  x21, zero, 0
+  addi  x22, zero, 0
+  addi  x23, zero, 0
+  addi  x24, zero, 0
+  addi  x25, zero, 0
+  addi  x26, zero, 0
+  addi  x27, zero, 0
+  addi  x28, zero, 0
+  addi  x29, zero, 0
+  addi  x30, zero, 0
+  addi  x31, zero, 0
+#endif
+```
+
+Firstly, the id of the hart that runs the assembly is stored into the register x1.
+The term hart is RISC-V lingo for a CPU core in a multi-core system. 
+
+Then the stack pointer is set up. 
+
+The global pointer is set up. The global pointer
+is used to point to some global data in RAM. Sometimes, text strings or other data
+is located into RAM by the compiler for later access when the code is executed. The
+global pointer is set such global data in RAM.
+
+The hart is set to machine mode which is the privileged mode as opposed to the 
+user mode which is not privileged.
+
+In machine mode, interrupts are turned off.
+
+Then register are initalized. Some register get addresses loaded with the la instructions.
+The rest of the registers are set to 0. Interestingly, the compiler does even respect
+the embedded variant of RISC-V since it will stop initializing registers after x15 
+if the symbol __riscv_32e is defined, because the embeddeded variants of RISC-V only 
+have the first 16 registers as opposed to all 32 registers!
+
+Next, the system will check if it is run on the first hart which has the hart id 0 or not.
+Depending on the current hart, the same application will perform different steps.
+
+As is the habit on multi core systems, system-software will start executing on all cores but
+it will keep running on core 0 only. 
+For the rest of the cores, the system software is executed for a very short time until it
+hits the core 0 check. It will fail the core 0 check and it will then pend on a software interrupt. 
+This means that all cores other than core 0 will pend. Pending means that they will go 
+to sleep until the software interrupt is triggered to wake up the cores. 
+
+The system software running on core 0 may decide to wake up the cores or it may decide 
+to let the cores sleep which effectively turns the multi-core system into a single-core system.
+
+> Prithee lull the Old one back to it's ancient slumber
+
+*The maiden, Demon's Souls by FromSoft / Bandai Namco*
+
+Here is the code that makes the harts sleep:
+SMP stands for symetric multi processing.
+
+```
+// ************************************************************************************************
+// SMP setup - wait for configuration if we are not core 0.
+// ************************************************************************************************
+__crt0_smp_check:
+  beqz  x1, __crt0_smp_primary              // proceed with normal boot-up if we are core 0
+
+  // setup machine software interrupt
+  la    x15,     __crt0_smp_wakeup
+  csrw  mtvec,   x15                        // install interrupt handler
+  csrsi mie,     1 << 3                     // only enable software interrupt source
+  csrsi mstatus, 1 << 3                     // enable machine-level interrupts
+  j     __crt0_sleep                        // wait for interrupt in sleep mode
+
+  // machine software interrupt handler
+__crt0_smp_wakeup:
+  li    x14, 0xfff44000                     // CLINT.MTIMECMP base address
+  lw    x2,  8(x14)                         // MTIMECMP[1].lo = stack top (sp)
+  lw    x12, 12(x14)                        // MTIMECMP[1].hi = entry point
+
+  // acknowledge booting
+  li    x14,  0xfff40000                    // CLINT.MSWI base address
+  sw    zero, 4(x14)                        // clear MSWI[1]
+
+  j     __crt0_main_entry                   // start at entry point
+
+__crt0_smp_primary:
+```
+
+We can see that the beqz command (Branch equal zero) will skip the entire sleep code on hart 0
+since each core will store it's id into x1 as we have analyzed earlier.
+
+Long story short, the take away is that your average hello world application will only
+run on hart 0 only because usually example applications will not wake up the other cores.
+All other harts will sleep. The simulation of the NEORV32 will only show activity on hart 0.
+You should not expect any activity on the other cores unless you trigger the software interrupt
+to wake up the other harts.
+
+## Write a simple main() function
+
+TODO:
+
