@@ -1114,7 +1114,7 @@ The simplest approach would probably be to call the MACRO directly from the main
 
 int main() {
 
-    CUSTOM_INSTR_R_TYPE(0b0000000, opb.binary_value, opa.binary_value, 0b000, 0b1010011);
+    CUSTOM_INSTR_R_TYPE(0b0000000, 1, 2, 0b000, 0b1010011);
 
     return 0;
 }
@@ -1146,6 +1146,10 @@ The main function looks like this:
  1f4:	00008067          	ret
 ```
 
-check that the hex data in the .word instruction matches the encoding you expect!
+The compiler has in fact loaded the hardcoded values 1 and 2 into registers
+a5 and a4. This means the registers a5 and a4 are encoded into the .word
+instruction.
+
+Check that the hex data in the .word instruction matches the encoding you expect!
 
 It needs to be the funct7 of the custom add1 instruction!
