@@ -877,9 +877,9 @@ GCC has the *asm ()* keyword (https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.ht
 for *inline assembly*.
 
 In it's simplest form, you can output literal assembly code or
-assembler instructions:
+assembler instructions from within C code:
 
-```
+```C
 asm ("nop")
 
 asm (".word 0x1234")
@@ -1120,11 +1120,20 @@ int main() {
 }
 ```
 
-Convert the .elf file into an assembly listing or just use the existing main.asm.
+Now rebuild the code.
+
+```
+make all
+```
+
+Convert the .elf file into an assembly listing 
 
 ```
 riscv-none-elf-objdump --disassemble main.elf > listing.asm
 ```
+
+or just use the existing main.asm which is created by the build.system
+automatically.
 
 The main function looks like this:
 
