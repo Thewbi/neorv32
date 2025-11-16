@@ -1,6 +1,11 @@
 # NEORV32 Documents
 
-Notes and material on the NEORV32 VHDL CPU
+Notes and materials on the NEORV32 VHDL CPU
+
+# Credit
+
+All credit goes to Stephan Nolting. All the ideas stem from his designs.
+I salute his ingenuity and creativity.
 
 # Links
 
@@ -235,7 +240,7 @@ This means, any funct7 with the scond highest bit set is not of use for the add1
 
 Let's use funct7 of 0b1000000 for add1.
 
-## Extending the Exection Engine Microcode
+## Extending the Execution Engine Microcode
 
 Next, since the Execution Engine checks instructions before executing them, we need to add the add1 instruction to the check.
 
@@ -750,9 +755,9 @@ We can see that the beqz command (Branch equal zero) will skip the entire sleep 
 since each core will store it's id into x1 as we have analyzed earlier. This is why the register
 x1 is used for the core 0 check.
 
-The sleep code jumps to the __crt0_sleep label for sleeping. When the interrupt wakes up the 
-core, the code returns on the __crt0_smp_wakeup label. Eventually, the sleep code will jump
-to the __crt0_main_entry symbol. From the __crt0_main_entry, the main() function is called.
+The sleep code jumps to the *__crt0_sleep* label for sleeping. When the interrupt wakes up the 
+core, the code returns on the *__crt0_smp_wakeup* label. Eventually, the sleep code will jump
+to the *__crt0_main_entry* symbol. From the *__crt0_main_entry*, the main() function is called.
 This means that system software on the other harts will start executing the same main function
 as hart 0 does eventually after wakeup.
 
@@ -794,5 +799,344 @@ to wake up the other harts.
 
 ## Write a simple main() function
 
-TODO:
+Copy the folder sw\example\hello_world to a new folder. Call that new folder sw\example\add1
 
+Check to see if the Makefile buildsystem picks up the new folder. Open a Msys2 MINGW64 console.
+
+```
+cd /c/Users/lapto/dev/VHDL/neorv32/sw/example
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
+PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
+```
+
+Adjust the paths to your local situation. Copy and pasting my paths from this tutorial without
+adjustments would be a mistake!
+
+Execute the all target.
+
+```
+make all
+```
+
+If the new add1 project is picked up by the toolchain, there should be output similar to:
+
+```
+$ make all
+make[1]: Entering directory '/c/Users/lapto/dev/VHDL/neorv32/sw/example/add1'
+Memory utilization:
+   text    data     bss     dec     hex filename
+   5052       0     256    5308    14bc main.elf
+Generating neorv32_exe.bin
+Executable size in bytes:
+5064
+Generating neorv32_raw_exe.hex
+Generating neorv32_raw_exe.bin
+Generating neorv32_raw_exe.coe
+Generating neorv32_raw_exe.mem
+Generating neorv32_raw_exe.mif
+Generating neorv32_application_image.vhd
+Installing application image to ../../../rtl/core/neorv32_application_image.vhd
+make[1]: Leaving directory '/c/Users/lapto/dev/VHDL/neorv32/sw/example/add1'
+```
+
+## Editing the Main Function
+
+As a framework, use a most basic implementation of main.
+
+```C
+#include <neorv32.h>
+
+int main() {
+    return 0;
+}
+```
+
+Check if it compiles still. (Expected output is the same as above)
+
+```
+cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/add1
+make all
+```
+
+## Inline Assembly
+
+The next big hurdle is to make the C compiler output the machine code
+for our custom add1 instruction. 
+
+Thinking this requirement through, the
+compiler cannot possibly output the add1 instruction since the add1 
+instruction is not part of the RISC-V nonpriviledged specification and
+hence the C-Compiler will not output this instruction because to the 
+compiler it simply does not exist!
+
+The only chance to emit this instruction is to manually output the 
+machine code. Luckily the compiler has keywords for direct assembly output.
+The process is called *inline assembly*.
+
+GCC has the *asm ()* keyword (https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html)
+for *inline assembly*.
+
+In it's simplest form, you can output literal assembly code or
+assembler instructions:
+
+```
+asm ("nop")
+
+asm (".word 0x1234")
+```
+
+If the assembly code has side effects only instead of manipulating data, 
+then the compiler might not anticipate the side effects and it might decide 
+to remove the assembly statements altogether because they are not part of
+any data flow that the compiler can identify. 
+
+If it is required that the assembly code is executed precisely as written 
+down, then the compiler is not allowed to optimize the statements.
+
+Obviously the compiler should not throw away or optmizie our
+assembly statements.
+
+In both cases, if deletion or optimization should be turned off for the
+assembly code, the *volatile* keyword needs to be used.
+
+```
+asm volatile ("nop")
+```
+
+Remember that the compiler and assembler do not recognize
+the new *add1* mnemonic and therefore direct machine code for the instruction 
+needs to be provided by the software engineer. As the compiler and
+assembler will not perform encoding of the new, custom instruction for use, the idea
+is to perform the encoding manually and emit machine code in form of hex numbers.
+
+Using the *.word* assembler instruction makes it possible to directly insert
+machine code into the assembly. This is required because of the reason 
+discussed above. 
+
+```
+asm volatile (
+    ".word
+
+    ... 
+```
+
+NEORV32 has a set of macros that perform instruction encoding using the .word
+approach outlined above.
+
+Here is the source code of the R-Type (register type) instruction encoding macro.
+All credit goes to Stephan Nolting as always in all this tutorial.
+
+```C
+/**********************************************************************//**
+ * @name R-type instruction format, RISC-V-standard
+ **************************************************************************/
+#define CUSTOM_INSTR_R_TYPE(funct7, rs2, rs1, funct3, opcode) \
+({                                                            \
+  uint32_t __return;                                          \
+  asm volatile (                                              \
+    ".word (                                                  \
+      (((" #funct7 ") & 0x7f) << 25) |                        \
+      (((  reg_%2   ) & 0x1f) << 20) |                        \
+      (((  reg_%1   ) & 0x1f) << 15) |                        \
+      (((" #funct3 ") & 0x07) << 12) |                        \
+      (((  reg_%0   ) & 0x1f) <<  7) |                        \
+      (((" #opcode ") & 0x7f) <<  0)                          \
+    );"                                                       \
+    : [rd] "=r" (__return)                                    \
+    : "r" (rs1),                                              \
+      "r" (rs2)                                               \
+  );                                                          \
+  __return;                                                   \
+})
+```
+
+This is mind-bowling stuff especially if one has never used inline assembly.
+The syntax is quite cryptic so let's go ahead and discuss the macro one step at a time.
+
+Going forward, GCC inline assembly is flexible and it allows us to 
+insert data that is read from parameters.
+
+### String Concatenation
+
+Firstly, if there are local variables or parameters that should be pasted into the inline
+assembly by value, then prefixing the variable names with a hash character '#'
+causes the asm () keyword to concatenate the values of the variables into the
+assembly code.
+
+This feature is used in the R-Type macro above for the parameters funct7, funct3 and
+opcode. This makes sense since funct7, funct3 and opcode are literal values to be
+used as is during encoding and hence they are just concatenated into the output.
+
+### Replacing Placeholders
+
+The next feature is to paste values where placeholders are provided. This is very
+similar to the format string of the printf() function family. With the printf()
+functions, the first parameters is a so-called format string containing placeholders
+followed by variables and values that are replaced where the placeholders are.
+
+This replacement consists of three parts. 
+
+1. A format string
+1. A way to provide placeholders along with an order (0, 1, 2, ...)
+1. A way to provide the values which also clearly defines an order so that the correct placeholders
+are replaced
+
+The format string of inline assembly is the code inside the asm () keyword itself. 
+
+The placeholders are specified using the percent sign '%' followed by natural numbers starting
+with 0 for the first parameter, 1 for the second ...
+
+The actual parameters are specified after the format string in a colon-separated list.
+A colon is the ':' character.
+
+In the R-Type encoding macro above, the local __return variable is the actual parameter
+number 0 (%0). The second actual parameter is the rs1 parameter and the third actual parameter
+is the rs2 parameter.
+
+Inside the format string, the placedholders are used as follows:
+
+```C
+reg_%0
+reg_%1
+reg_%2
+```
+
+It is hopefully clear by now that the first actual parameter will replce %0 in the format string.
+Same goes for the other parameters in the order specified by the colon-separated list.
+
+### In- and out-parameters
+
+The inline assembly *asm ()* keyword allows the programmer to make a distincion between variables
+that go into the inline assembly as inputs and variables that get results assigned once the
+inline assembly is executed.
+
+This is dark compiler magic. I cannot even fathom how this feature is implemented.
+In fact, the only thing I can do is to tell you that the *"=r"* string in the colon-separated
+parameter list denotes output parameters whereas the *"r"* string denotes input-parameters.
+
+In the RISC-V encoding schemes, the destination register is always generalized by the *rd* name 
+and input register 1 is called *rs1* and input register 2 is called *rs2*
+
+In the encoding macro for R-Type instructions, *rd* is choosen by the compiler since the 
+local variable __return is used as an output parameter (=r). Whichever register __return is
+placed into, that register will be used as *rd* in the statement above.
+
+The input register *rs1* and *rs2* are hand crafted by the macro. The compiler has no say
+in selecting *rs1* and *rs2*, instead it is forced to use the values specified via in 
+parameters (r).
+
+This is the explanation of the encoding Macro! It allows you to encode custom RISC-V
+instructions into the machine code that the compiler outputs. This works even although
+the compiler and assembler have no clue about the custom mnemonics that you have defined
+as you conduct computer science experiments or work on custom extensions that are not ratified yet.
+
+### Usage
+
+To use the macro, look at this example:
+
+```C
+/**********************************************************************//**
+ * Single-precision floating-point addition
+ *
+ * @param[in] rs1 Source operand 1.
+ * @param[in] rs2 Source operand 2.
+ * @return Result.
+ **************************************************************************/
+inline float __attribute__ ((always_inline)) riscv_intrinsic_fadds(float rs1, float rs2) {
+
+  float_conv_t opa, opb, res;
+  opa.float_value = rs1;
+  opb.float_value = rs2;
+
+  res.binary_value = CUSTOM_INSTR_R_TYPE(0b0000000, opb.binary_value, opa.binary_value, 0b000, 0b1010011);
+  return res.float_value;
+}
+```
+
+The function carries the term intrinsic in it's name. The name intrinsic is used for
+glue code that makes assembly or hardware based functionality usable from within the
+C programming language.
+
+The intrinsic above outputs the custom instruction and when executed returns the result
+from the *rd* register back to the C code as the return value of the function.
+
+A second approach is to only use the CUSTOM_INSTR_R_TYPE macro without processing the
+return value.
+
+```C
+/**********************************************************************//**
+ * @name Low-level CFU custom instruction prototypes ("intrinsics").
+ * Note that each instruction provides a uint32_t return value.
+ **************************************************************************/
+/**@{*/
+/** R-type CFU custom instruction (CUSTOM-0 opcode) */
+#define neorv32_cfu_r_instr(funct7, funct3, rs1, rs2) CUSTOM_INSTR_R_TYPE(funct7, rs2, rs1, funct3, 0b0001011)
+/** I-type CFU custom instruction (CUSTOM-1 opcode) */
+#define neorv32_cfu_i_instr(funct3, imm12, rs1) CUSTOM_INSTR_I_TYPE(imm12, rs1, funct3, 0b0101011)
+/**@}*/
+```
+
+The #define preprocessor instruction defines the symbol neorv32_cfu_r_instr which basically is 
+replaced with the CUSTOM_INSTR_R_TYPE macro.
+
+Next, there are even more define preprocessor statements for each individual custom function.
+
+```C
+/**********************************************************************//**
+ * @name Define macros for easy CFU instruction wrapping
+ **************************************************************************/
+/**@{*/
+#define xtea_key_write(i, data)     neorv32_cfu_i_instr(0b001, i, data)
+#define xtea_key_read(i)            neorv32_cfu_i_instr(0b000, i, 0   )
+#define xtea_hw_init(sum)           neorv32_cfu_r_instr(0b0000000, 0b100, sum, 0 )
+#define xtea_hw_enc_v0_step(v0, v1) neorv32_cfu_r_instr(0b0000000, 0b000, v0,  v1)
+#define xtea_hw_enc_v1_step(v0, v1) neorv32_cfu_r_instr(0b0000000, 0b001, v0,  v1)
+#define xtea_hw_dec_v0_step(v0, v1) neorv32_cfu_r_instr(0b0000000, 0b010, v0,  v1)
+#define xtea_hw_dec_v1_step(v0, v1) neorv32_cfu_r_instr(0b0000000, 0b011, v0,  v1)
+#define xtea_hw_illegal_inst()      neorv32_cfu_r_instr(0b0000000, 0b111, 0,   0 )
+/**@}*/
+```
+
+These custom functions are used in code:
+
+```C
+// set XTEA-CFU key storage (via CFU CSRs)
+  xtea_key_write(0, key[0]);
+  xtea_key_write(1, key[1]);
+  xtea_key_write(2, key[2]);
+  xtea_key_write(3, key[3]);
+```
+
+The simplest approach would probably be to call the MACRO directly from the main function.
+
+```C
+#include <neorv32.h>
+
+int main() {
+
+    CUSTOM_INSTR_R_TYPE(0b0000000, opb.binary_value, opa.binary_value, 0b000, 0b1010011);
+
+    return 0;
+}
+```
+
+Convert the .elf file into an assembly listing or just use the existing main.asm.
+
+```
+riscv-none-elf-objdump --disassemble main.elf > listing.asm
+```
+
+The main function looks like this:
+
+```
+000001e4 <main>:
+ 1e4:	00200793          	li	a5,2
+ 1e8:	00100713          	li	a4,1
+ 1ec:	00e787d3          	.word	0x00e787d3
+ 1f0:	00000513          	li	a0,0
+ 1f4:	00008067          	ret
+```
+
+check that the hex data in the .word instruction matches the encoding you expect!
+
+It needs to be the funct7 of the custom add1 instruction!
