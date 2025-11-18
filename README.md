@@ -1114,7 +1114,7 @@ The simplest approach would probably be to call the MACRO directly from the main
 
 int main() {
 
-    CUSTOM_INSTR_R_TYPE(0b0000000, 1, 2, 0b000, 0b1010011);
+    CUSTOM_INSTR_R_TYPE(0b1000000, 1, 2, 0b000, 0b0110011);
 
     return 0;
 }
@@ -1123,6 +1123,9 @@ int main() {
 Now rebuild the code.
 
 ```
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
+PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
+cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/add1
 make all
 ```
 
@@ -1139,11 +1142,19 @@ The main function looks like this:
 
 ```
 000001e4 <main>:
+#include <neorv32.h>
+
+int main() {
+
+    CUSTOM_INSTR_R_TYPE(0b1000000, 1, 2, 0b000, 0b0110011);
  1e4:	00200793          	li	a5,2
  1e8:	00100713          	li	a4,1
- 1ec:	00e787d3          	.word	0x00e787d3
+ 1ec:	80e787b3          	.word	0x80e787b3
+
+    return 0;
  1f0:	00000513          	li	a0,0
  1f4:	00008067          	ret
+
 ```
 
 The compiler has in fact loaded the hardcoded values 1 and 2 into registers
@@ -1153,3 +1164,89 @@ instruction.
 Check that the hex data in the .word instruction matches the encoding you expect!
 
 It needs to be the funct7 of the custom add1 instruction!
+
+# Extending the NEORV32 via the Custom Functions Subsystem (CFS)
+
+https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
+https://stnolting.github.io/neorv32/#_custom_functions_subsystem_cfs
+
+TODO:
+
+# Extending the NEORV32 via the Custom Functions Unit (CFU)
+
+https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
+https://stnolting.github.io/neorv32/#_custom_functions_unit_cfu
+
+> The Custom Functions Unit (CFU) is a functional unit that is integrated right into the CPU’s pipeline. It allows to implement custom RISC-V instructions. This extension option is intended for rather small logic that implements operations, which cannot be emulated in pure software in an efficient way. Since the CFU has direct access to the core’s register file it can operate with minimal data latency.
+
+> CFU Complexity. The CFU is not intended for complex and CPU-independent functional units that implement complete accelerators (like full block-based AES encryption). These kind of accelerators should be implemented as memory-mapped co-processor via the Custom Functions Subsystem (CFS) to allow CPU-independent operation. A comparative survey of all NEORV32-specific hardware extension/customization options is provided in the user guide section Adding Custom Hardware Modules.
+
+https://stnolting.github.io/neorv32/ug/#_comparative_summary
+
+## Questions
+
+Q: How does the NEORV32 CPU know which CFU to start or to call?
+A: There is only a single CFU module. The module is integrated into the ALU as a coprocessor. Whenever a instruction is executed that uses the predefined custom-0 and custom-1 opcodes (See https://stnolting.github.io/neorv32/#_cfu_instruction_formats), the CFU is called.
+
+Q: How does the CFU know which instruction has been executed?
+A: All instruction using the opcodes custom-0 (0001011), used for CFU R-Type Instructions and custom-1 (0101011), used for CFU I-Type Instructions are processed by the ALU. Inside the ALU, the CFU entity is instantiated and it gets the funct7, funct3, funct12, rs1 and rs2 port mapped. The flag ctrl_i.alu_cp_cfu decides about if the CFU is activated and starts processing the data or not. ctrl_i.alu_cp_cfu is set during the EX_EXECUTE microcode step of the CPU control (rtl\core\neorv32_cpu_control.vhd)
+
+```
+-- CFU: custom RISC-V instructions --
+when opcode_cust0_c | opcode_cust1_c =>
+ctrl_nxt.alu_cp_cfu  <= '1'; -- trigger CFU co-processor
+exe_engine_nxt.state <= EX_ALU_WAIT; -- will be aborted via monitor 
+                                        -- timeout if CFU is not implemented
+```
+
+opcode_cust0_c and opcode_cust1_c are the custom-0 and custom-1 opcodes mentioned above.
+
+```
+-- official custom RISC-V opcodes - free for custom instructions --
+  constant opcode_cust0_c  : std_ulogic_vector(6 downto 0) := "0001011"; -- custom-0 (NEORV32 CFU)
+  constant opcode_cust1_c  : std_ulogic_vector(6 downto 0) := "0101011"; -- custom-1 (NEORV32 CFU)
+```
+
+This means, when the EX_EXECUTE microcode step sees the custom opcodes, then it activates the CFU coprocessor inside the ALU. The CFU entity will then process the instructions and look at funct7 and funct3.
+
+There are 1024 (1016 ???) possible custom CFU instructions possible based on the amount of combinations of funct7 and funct3. (2^7 * 2^3 = 1016). The idea is that there will not be one separate CFU entity per extension but instead, every extension will share the same entity.
+
+Currently the code contains a sample implementation of XTEA. XTEA uses about eight custom instructions. The XTEA CFU constains instructions to set and get keys, to perform encryption and decryption.
+
+##
+
+
+https://www.joyk.com/dig/detail/1643814277313172#gsc.tab=0
+
+With this PR the NEORV32 now provides an option to add custom RISC-V instructions.
+
+This PR adds a Custom Functions Unit (CFU) wrapped in the Zxcfu ISA extension, which is a NEORV32-specific custom ISA extension. The extension's name follows the RISC-V naming scheme:
+
+Z = this is a sub-extension
+x = the second letter behind the Z defines the "parent-extension" where this sub-extension belongs to: in this case it belongs to the X "custom extensions" extension (platform-specific extension that is not defined by the RISC-V spec.)
+cfu = name of the extension (Custom Functions Unit)
+The CFU is implemented as a new hardware module (rtl/core/neorv32_cpu_cp_cfu.vhd) that is integrated right into the CPU's ALU. Thus, the CFU has direct access to the core's register file, which provides minimal data transfer latency. A special OPCODE, which has been officially reserved for custom extensions by the RISC-V spec, is used to build custom instructions. The custom instructions supported by the CFU use the R2-type format that provides two source registers, one destinations register and a 10-bit immediate (split into two bit-fields:
+
+The funct7 and funct3 bit-fields can be used to pass immediates to the CFU for certain computations (for example offsets, addresses, shift-amounts, ...) or they can be used to select the actual custom instruction to be executed (allowing up to 1024 different instructions).
+
+Software can utilize the custom instruction by using the provides intrinsics (defined in sw/lib/include/neorv32_cpu_cfu.h. These pre-defined functions implicitly set the funct3 bit field. Each intrinsic can be treated as "normal C function" (see #263). A simple demo program using the default CFU hardware is available in sw/example/demo_cfu.
+
+```
+// custom instruction prototypes
+neorv32_cfu_cmd0(funct7, rs1, rs2); // funct3 = 000
+neorv32_cfu_cmd1(funct7, rs1, rs2); // funct3 = 001
+neorv32_cfu_cmd2(funct7, rs1, rs2); // funct3 = 010
+neorv32_cfu_cmd3(funct7, rs1, rs2); // funct3 = 011
+neorv32_cfu_cmd4(funct7, rs1, rs2); // funct3 = 100
+neorv32_cfu_cmd5(funct7, rs1, rs2); // funct3 = 101
+neorv32_cfu_cmd6(funct7, rs1, rs2); // funct3 = 110
+neorv32_cfu_cmd7(funct7, rs1, rs2); // funct3 = 111
+```
+
+This new feature was highly inspired by @google's CFU-Playground (https://github.com/google/CFU-Playground) - thanks again to @umarcor for showing me that framework. With some logic plumbing it should be possible to install the CFUs from the CFU-Playground into the NEORV32.
+
+### CFU vs. CFS
+There are two processor-internal options for custom hardware now: the Custom Functions Subsystem (CFS) and the Custom Functions Unit (CFU).
+
+Custom Functions Subsystem (CFS): The CFS is a memory-mapped peripheral that is accessed using load/store instructions. It is intended for complex accelerators that - once triggered - perform some "long" processing in a CPU-independent manner (like a complete AES encryption). The CFS also provides the option to implement custom interfaces as it has direct access to special top entity signals.
+Custom Functions Unit (CFU): The CFU is located right inside the CPU's pipeline. It is intended for custom instructions that implement certain functionality, which is not supported by the official (and supported) RISC-V ISA extensions. These instructions should be rather simple data transformations (like bit-reversal, summing elements in a vector, elementary AES operations, ...) rather than implementing a complete algorithm (even if this is also supported) since the CFU instructions are absolutely CPU-dependent and will stall the core until completed.
