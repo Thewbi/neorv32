@@ -1318,7 +1318,9 @@ The interface consists of
 * An interrupt line from the CFS co-processor towards the CPU.
 * And a 255 bit bus called cfs_in_i into the co-processor and a output bus out of the co-processor called cfs_out_o.
 
-### Bus Requests
+### Bus Requests / Responses
+
+Bus Requests / Responses are used by all memory mapped hardware. CFS is memory mapped hardware. As such Bus Requests / Responses are not specific to CFS but they are a general concept for the NEORV32 processor.
 
 The bus requests are defined as such:
 
@@ -1403,7 +1405,7 @@ Writing to the register directly will cause a memory read or write to/from a spe
 
 The bus is implemented in such a way that a read/write request to a CFS register is translated into a bus_req_t object which was described earlier as part of the interface of the CFS entity.
 
-The file rtl\core\neorv32_bus.vhd contains the bus implementation. the neorv32_bus_io_switch entity is the basic switching table that will connect users to memory mapped hardware behind the scenes just like on of those classic telephone switching tables back in the day of analog phone switching where thick cinch cables had been used to connect the caller to the callee.
+The file rtl\core\neorv32_bus.vhd contains the bus implementation. the neorv32_bus_io_switch entity is the basic switching table that will connect users/addresses to memory mapped hardware behind the scenes just like one of those classic telephone switching tables back in the day of analog phone switching where thick cinch cables had been used to connect the caller to the callee.
 
 Firstly, the CFS entity is instaniated inside rtl\core\neorv32_top.vhd
 
@@ -1442,7 +1444,7 @@ if (main_req.addr(addr_hi_c downto addr_lo_c) = dev_base_list_c(i)(addr_hi_c dow
 
 Entry 11 of the device base list is used by the CFS.
 
-neorv32_bus_io_switch is a generic entity. This means, during it's initialization, values need to be supplied for it's generic parameters. These concrete values contain the base addresses for all the device base list entries.
+neorv32_bus_io_switch is a generic entity. This means, during it's initialization, concrete values need to be supplied for each of it's generic parameters. These concrete values contain the base addresses for all the device base list entries.
 
 For example the generic parameter DEV_11_BASE for the CFS is then used like this:
 
@@ -1457,7 +1459,7 @@ For example the generic parameter DEV_11_BASE for the CFS is then used like this
   );
 ```
 
-This means if during instantiation a address is given for the DEV_11_BASE, then this address is used for the CFS subsystem and requests are routed to the CFS.
+This means if during instantiation a address is given for the DEV_11_BASE, then this address is used for the CFS subsystem and requests to that address are routed to the CFS hardware that is memory mapped to that address.
 
 The instatiation of neorv32_bus_io_switch is contained in rtl\core\neorv32_top.vhd
 
@@ -1545,12 +1547,123 @@ The instatiation of neorv32_bus_io_switch is contained in rtl\core\neorv32_top.v
 This massive instantiation enables the CFS if configured. It will assign the base address and at the same time map the correct bus request and response signals to the respective ports:
 
 ```
+DEV_11_EN => IO_CFS_EN,       DEV_11_BASE => base_io_cfs_c,
+```
+
+and
+
+```
 dev_11_req_o => iodev_req(IODEV_CFS),     dev_11_rsp_i => iodev_rsp(IODEV_CFS),
 ```
 
+Let's check the value for base_io_cfs_c. It is defined in rtl\core\neorv32_package.vhd. It is part of the so-called address map. The following definition is used:
+
+```
+constant base_io_cfs_c     : std_ulogic_vector(31 downto 0) := x"ffeb0000";
+```
+
+Now, it is clear that using the address 0xffeb0000 will allow the user to talk to the CFS.
+
+Let's check the application code again to see if the address actually used.
+
+```
+// C-code CFS usage example
+NEORV32_CFS->REG[0] = (uint32_t)some_data_array(i); // write to CFS register 0
+int temp = (int)NEORV32_CFS->REG[20]; // read from CFS register 20
+```
+
+Here, NEORV32_CFS->REG[0] is used instead of a hardcoded address. The file HAL (Hardware Abstraction Layer) file sw\lib\include\neorv32_cfs.h defines the NEORV32_CFS symbol. During that definition, the structure and the address are determined:
+
+```
+/** CFS module prototype */
+typedef volatile struct __attribute__((packed,aligned(4))) {
+  uint32_t REG[(64*1024)/4]; /**< CFS registers, user-defined */
+} neorv32_cfs_t;
+
+/** CFS module hardware handle (#neorv32_cfs_t) */
+#define NEORV32_CFS ((neorv32_cfs_t*) (NEORV32_CFS_BASE))
+```
+
+First, a struct using 64k / 4 registers are defined, then a type is defined over the struct. The type is called neorv32_cfs_t.
+
+Then the symbol NEORV32_CFS is defined to be a pointer of type neorv32_cfs_t to the address NEORV32_CFS_BASE.
+
+sw\lib\include\neorv32.h contains the definition of NEORV32_CFS_BASE.
+
+```
+#define NEORV32_CFS_BASE     (0xFFEB0000U) /**< Custom Functions Subsystem (CFS) */
+```
+
+The define uses 0xFFEB0000U. This is the exact address used for the VHDL constant base_io_cfs_c. Now it is clear that the VHDL and the C-Code match at least for the address where CFS will be mapped to in memory.
 
 
 ### The example
 
-The provided CFS example
+The provided CFS C-Code example just directly writes to the memory mapped registers. No instrinics are defined.
+
+```
+// function examples
+neorv32_uart0_printf("\n--- CFS 'OR-all-bits' function ---\n");
+for (i=0; i<TESTCASES; i++) {
+  tmp = neorv32_aux_xorshift32(); // get random test data
+  NEORV32_CFS->REG[0] = tmp; // write to CFS memory-mapped register 0
+  neorv32_uart0_printf("%u: IN = 0x%x, OUT = 0x%x\n", i, tmp, NEORV32_CFS->REG[0]); // read from CFS memory-mapped register 0
+}
+neorv32_uart0_printf("\n--- CFS 'XOR-all-bits' function ---\n");
+for (i=0; i<TESTCASES; i++) {
+  tmp = neorv32_aux_xorshift32(); // get random test data
+  NEORV32_CFS->REG[1] = tmp; // write to CFS memory-mapped register 1
+  neorv32_uart0_printf("%u: IN = 0x%x, OUT = 0x%x\n", i, tmp, NEORV32_CFS->REG[1]); // read from CFS memory-mapped register 1
+}
+neorv32_uart0_printf("\n--- CFS 'bit reversal' function ---\n");
+for (i=0; i<TESTCASES; i++) {
+  tmp = neorv32_aux_xorshift32(); // get random test data
+  NEORV32_CFS->REG[2] = tmp; // write to CFS memory-mapped register 2
+  neorv32_uart0_printf("%u: IN = 0x%x, OUT = 0x%x\n", i, tmp, NEORV32_CFS->REG[2]); // read from CFS memory-mapped register 2
+}
+neorv32_uart0_printf("\n--- CFS 'byte swap' function ---\n");
+for (i=0; i<TESTCASES; i++) {
+  tmp = neorv32_aux_xorshift32(); // get random test data
+  NEORV32_CFS->REG[3] = tmp; // write to CFS memory-mapped register 3
+  neorv32_uart0_printf("%u: IN = 0x%x, OUT = 0x%x\n", i, tmp, NEORV32_CFS->REG[3]); // read from CFS memory-mapped register 3
+}
+```
+
+The VHDL implentation acknowledges bus requests and reads and writes to registers defined internally, not externally visible.
+
+```
+-- write access (word-wise) --
+if (bus_req_i.rw = '1') the
+  if (bus_req_i.addr(15 downto 2) = "00000000000000") then -- 16-bit byte address 14-bit word address
+    cfs_reg_wr(0) <= bus_req_i.data;
+  end if;
+  if (bus_req_i.addr(15 downto 2) = "00000000000001") then
+    cfs_reg_wr(1) <= bus_req_i.data;
+  end if;
+  if (bus_req_i.addr(15 downto 2) = "00000000000010") then
+    cfs_reg_wr(2) <= bus_req_i.data;
+  end if;
+  if (bus_req_i.addr(15 downto 2) = "00000000000011") then
+    cfs_reg_wr(3) <= bus_req_i.data;
+  end if
+-- read access (word-wise) --
+else
+  case bus_req_i.addr(15 downto 2) is -- 16-bit byte address = 14-bit word address
+    when "00000000000000" => bus_rsp_o.data <= cfs_reg_rd(0);
+    when "00000000000001" => bus_rsp_o.data <= cfs_reg_rd(1);
+    when "00000000000010" => bus_rsp_o.data <= cfs_reg_rd(2);
+    when "00000000000011" => bus_rsp_o.data <= cfs_reg_rd(3);
+    when others           => bus_rsp_o.data <= (others => '0');
+  end case
+end if;
+```
+
+and
+
+```
+cfs_reg_rd(0) <= x"0000000" & "000" & or_reduce_f(cfs_reg_wr(0)); -- OR all bits
+cfs_reg_rd(1) <= x"0000000" & "000" & xor_reduce_f(cfs_reg_wr(1)); -- XOR all bits
+cfs_reg_rd(2) <= bit_rev_f(cfs_reg_wr(2)); -- bit reversal
+cfs_reg_rd(3) <= (others => '1');
+```
 
