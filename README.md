@@ -5,6 +5,7 @@
 Notes and materials on the NEORV32 VHDL CPU
 
 [ToC]
+[[_TOC_]]
 
 # Credit
 
