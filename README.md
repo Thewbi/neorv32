@@ -1307,5 +1307,250 @@ Currently the code contains a sample implementation of XTEA. XTEA uses about eig
 https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
 https://stnolting.github.io/neorv32/#_custom_functions_subsystem_cfs
 
-TODO:
+### The interface of CFS
+
+CFS is basically a way to define a co-processor.
+The CPU and the CFS co-processor communicate via an interface.
+
+The interface consists of
+
+* bus requests that enter the CFS co-processor and bus responses that exit the CFS co-processor.
+* An interrupt line from the CFS co-processor towards the CPU.
+* And a 255 bit bus called cfs_in_i into the co-processor and a output bus out of the co-processor called cfs_out_o.
+
+### Bus Requests
+
+The bus requests are defined as such:
+
+```
+-- bus request --
+type bus_req_t is record
+    meta  : std_ulogic_vector(2 downto 0); -- access meta information
+    addr  : std_ulogic_vector(31 downto 0); -- access address
+    data  : std_ulogic_vector(31 downto 0); -- write data
+    ben   : std_ulogic_vector(3 downto 0); -- byte enable
+    stb   : std_ulogic; -- request strobe, single-shot
+    rw    : std_ulogic; -- 0 = read, 1 = write
+    amo   : std_ulogic; -- set if atomic memory operation
+    amoop : std_ulogic_vector(3 downto 0); -- type of atomic memory operation
+    burst : std_ulogic; -- set if part of burst access
+    lock  : std_ulogic; -- set if exclusive access request
+    -- out-of-band signals --
+    fence : std_ulogic; -- set if fence(.i) operation, single-shot
+end record;
+
+bus_req_i : in  bus_req_t; -- bus request
+```
+
+and
+
+```
+-- bus response --
+type bus_rsp_t is record
+    ack  : std_ulogic; -- set if access acknowledge, single-shot
+    err  : std_ulogic; -- set if access error, valid if ack = 1
+    data : std_ulogic_vector(31 downto 0); -- read data, valid if ack = 1
+end record;
+
+bus_rsp_o : out bus_rsp_t; -- bus response
+```
+
+The request has an address and data and an rw flag with identifies it as either a read or a write operation.
+
+The response has a value field that carries data in case of read operations. If the request is a write request, then the data has to be zero!
+
+```
+-- bus access --
+      bus_rsp_o.data <= (others => '0'); -- the output HAS TO BE ZERO if there is no actual
+                                         -- (read) access
+```
+
+When the CPU wants to execute a request, it will strobe for a single cycle. The CFS co-processor will acknowledge on the next cycle by setting ack high for a cycle. If the co-processor needs more time to process the request, it will acknowledge on a later cycle! If the CPU sees no ACK, then it will eventually time out! It is unclear how long the timeout is!
+
+err is pulled lo if there is no error.
+
+```
+-- transfer/access acknowledge --
+      bus_rsp_o.ack <= bus_req_i.stb; -- send ACK right after the access request
+      bus_rsp_o.err <= '0'; -- set high together with bus_rsp_o.ack if there is an access error
+```
+
+Besides the bus_req_i and bus_rsp_o objects, there are two 255 bit busses called cfs_in_i and cfs_out_o. They are also referred to as conduits. I do not know if the data transfer over the conduits also needs request and acknowledge in the bus request and bus response or if the conduits are completely independant of the bus request/response.
+
+The example just sets the out conduit to zero:
+
+```
+cfs_out_o <= (others => '0');
+```
+
+This means the example does not even make use of the conduits.
+
+### Writing Software that uses CFS
+
+First, use the CFS-HAL function defined in neorv32_cfs.c/h called int neorv32_cfs_available(void) to determined, if the CFS has been enabled in the configuration and therefore has even been synethsized. Once verified that it is synthesized, the usage can continue.
+
+As outlined in the NEORV32 datasheet (Section "CFS Software Access"), the official way to access the CFS is to write into the memory mapped registers of the CFS module directly from the application:
+
+Source: https://stnolting.github.io/neorv32/ > CFS Software Access > Listing 15. CFS Software Access Example
+
+```
+// C-code CFS usage example
+NEORV32_CFS->REG[0] = (uint32_t)some_data_array(i); // write to CFS register 0
+int temp = (int)NEORV32_CFS->REG[20]; // read from CFS register 20
+```
+
+Writing to the register directly will cause a memory read or write to/from a specific address. Internally inside the NEORV32 CPU, this will cause a bus access.
+
+The bus is implemented in such a way that a read/write request to a CFS register is translated into a bus_req_t object which was described earlier as part of the interface of the CFS entity.
+
+The file rtl\core\neorv32_bus.vhd contains the bus implementation. the neorv32_bus_io_switch entity is the basic switching table that will connect users to memory mapped hardware behind the scenes just like on of those classic telephone switching tables back in the day of analog phone switching where thick cinch cables had been used to connect the caller to the callee.
+
+Firstly, the CFS entity is instaniated inside rtl\core\neorv32_top.vhd
+
+```
+neorv32_cfs_enabled:
+if IO_CFS_EN generate
+    neorv32_cfs_inst: entity neorv32.neorv32_cfs
+    port map (
+    clk_i       => clk_i,
+    rstn_i      => rstn_sys,
+    bus_req_i   => iodev_req(IODEV_CFS),
+    bus_rsp_o   => iodev_rsp(IODEV_CFS),
+    irq_o       => firq(FIRQ_CFS),
+    cfs_in_i    => cfs_in_i,
+    cfs_out_o   => cfs_out_o
+    );
+end generate;
+```
+
+bus_req_i is connected to iodev_req(IODEV_CFS).
+
+Inside rtl\core\neorv32_top.vhd, dev_11_req_o is assigned to iodev_req(IODEV_CFS).
+
+```
+dev_11_req_o => iodev_req(IODEV_CFS),     dev_11_rsp_i => iodev_rsp(IODEV_CFS),
+```
+
+dev_11_req_o is a port of the neorv32_bus_io_switch as can be seen in rtl\core\neorv32_bus.vhd on line 547.
+
+Looking at the label bus_request_gen in rtl\core\neorv32_bus.vhd, if a request for an address falls in the range of a certain entry in the device base list, then the request is forwarded to that device base list entry.
+
+```
+if (main_req.addr(addr_hi_c downto addr_lo_c) = dev_base_list_c(i)(addr_hi_c downto addr_lo_c)) then
+    dev_req(i).stb <= main_req.stb; -- propagate transaction strobe if address match
+```
+
+Entry 11 of the device base list is used by the CFS.
+
+neorv32_bus_io_switch is a generic entity. This means, during it's initialization, values need to be supplied for it's generic parameters. These concrete values contain the base addresses for all the device base list entries.
+
+For example the generic parameter DEV_11_BASE for the CFS is then used like this:
+
+```
+-- list of device base addresses --
+  type dev_base_list_t is array (0 to num_devs_c-1) of std_ulogic_vector(31 downto 0);
+  constant dev_base_list_c : dev_base_list_t := (
+    DEV_00_BASE, DEV_01_BASE, DEV_02_BASE, DEV_03_BASE, DEV_04_BASE, DEV_05_BASE, DEV_06_BASE, DEV_07_BASE,
+    DEV_08_BASE, DEV_09_BASE, DEV_10_BASE, DEV_11_BASE, DEV_12_BASE, DEV_13_BASE, DEV_14_BASE, DEV_15_BASE,
+    DEV_16_BASE, DEV_17_BASE, DEV_18_BASE, DEV_19_BASE, DEV_20_BASE, DEV_21_BASE, DEV_22_BASE, DEV_23_BASE,
+    DEV_24_BASE, DEV_25_BASE, DEV_26_BASE, DEV_27_BASE, DEV_28_BASE, DEV_29_BASE, DEV_30_BASE, DEV_31_BASE
+  );
+```
+
+This means if during instantiation a address is given for the DEV_11_BASE, then this address is used for the CFS subsystem and requests are routed to the CFS.
+
+The instatiation of neorv32_bus_io_switch is contained in rtl\core\neorv32_top.vhd
+
+```
+-- IO Switch ------------------------------------------------------------------------------
+    -- -------------------------------------------------------------------------------------------
+    neorv32_bus_io_switch_inst: entity neorv32.neorv32_bus_io_switch
+    generic map (
+      INREG_EN  => true,
+      OUTREG_EN => true,
+      DEV_SIZE  => iodev_size_c,
+      DEV_00_EN => bootrom_en_c,    DEV_00_BASE => base_io_bootrom_c,
+      DEV_01_EN => false,           DEV_01_BASE => (others => '0'), -- reserved
+      DEV_02_EN => false,           DEV_02_BASE => (others => '0'), -- reserved
+      DEV_03_EN => false,           DEV_03_BASE => (others => '0'), -- reserved
+      DEV_04_EN => false,           DEV_04_BASE => (others => '0'), -- reserved
+      DEV_05_EN => false,           DEV_05_BASE => (others => '0'), -- reserved
+      DEV_06_EN => false,           DEV_06_BASE => (others => '0'), -- reserved
+      DEV_07_EN => false,           DEV_07_BASE => (others => '0'), -- reserved
+      DEV_08_EN => false,           DEV_08_BASE => (others => '0'), -- reserved
+      DEV_09_EN => false,           DEV_09_BASE => (others => '0'), -- reserved
+      DEV_10_EN => IO_TWD_EN,       DEV_10_BASE => base_io_twd_c,
+      DEV_11_EN => IO_CFS_EN,       DEV_11_BASE => base_io_cfs_c,
+      DEV_12_EN => IO_SLINK_EN,     DEV_12_BASE => base_io_slink_c,
+      DEV_13_EN => IO_DMA_EN,       DEV_13_BASE => base_io_dma_c,
+      DEV_14_EN => false,           DEV_14_BASE => (others => '0'), -- reserved
+      DEV_15_EN => false,           DEV_15_BASE => (others => '0'), -- reserved
+      DEV_16_EN => io_pwm_en_c,     DEV_16_BASE => base_io_pwm_c,
+      DEV_17_EN => IO_GPTMR_EN,     DEV_17_BASE => base_io_gptmr_c,
+      DEV_18_EN => IO_ONEWIRE_EN,   DEV_18_BASE => base_io_onewire_c,
+      DEV_19_EN => IO_TRACER_EN,    DEV_19_BASE => base_io_tracer_c,
+      DEV_20_EN => IO_CLINT_EN,     DEV_20_BASE => base_io_clint_c,
+      DEV_21_EN => IO_UART0_EN,     DEV_21_BASE => base_io_uart0_c,
+      DEV_22_EN => IO_UART1_EN,     DEV_22_BASE => base_io_uart1_c,
+      DEV_23_EN => IO_SDI_EN,       DEV_23_BASE => base_io_sdi_c,
+      DEV_24_EN => IO_SPI_EN,       DEV_24_BASE => base_io_spi_c,
+      DEV_25_EN => IO_TWI_EN,       DEV_25_BASE => base_io_twi_c,
+      DEV_26_EN => IO_TRNG_EN,      DEV_26_BASE => base_io_trng_c,
+      DEV_27_EN => IO_WDT_EN,       DEV_27_BASE => base_io_wdt_c,
+      DEV_28_EN => io_gpio_en_c,    DEV_28_BASE => base_io_gpio_c,
+      DEV_29_EN => IO_NEOLED_EN,    DEV_29_BASE => base_io_neoled_c,
+      DEV_30_EN => io_sysinfo_en_c, DEV_30_BASE => base_io_sysinfo_c,
+      DEV_31_EN => OCD_EN,          DEV_31_BASE => base_io_ocd_c
+    )
+    port map (
+      clk_i        => clk_i,
+      rstn_i       => rstn_sys,
+      main_req_i   => io_req,
+      main_rsp_o   => io_rsp,
+      dev_00_req_o => iodev_req(IODEV_BOOTROM), dev_00_rsp_i => iodev_rsp(IODEV_BOOTROM),
+      dev_01_req_o => open,                     dev_01_rsp_i => rsp_terminate_c, -- reserved
+      dev_02_req_o => open,                     dev_02_rsp_i => rsp_terminate_c, -- reserved
+      dev_03_req_o => open,                     dev_03_rsp_i => rsp_terminate_c, -- reserved
+      dev_04_req_o => open,                     dev_04_rsp_i => rsp_terminate_c, -- reserved
+      dev_05_req_o => open,                     dev_05_rsp_i => rsp_terminate_c, -- reserved
+      dev_06_req_o => open,                     dev_06_rsp_i => rsp_terminate_c, -- reserved
+      dev_07_req_o => open,                     dev_07_rsp_i => rsp_terminate_c, -- reserved
+      dev_08_req_o => open,                     dev_08_rsp_i => rsp_terminate_c, -- reserved
+      dev_09_req_o => open,                     dev_09_rsp_i => rsp_terminate_c, -- reserved
+      dev_10_req_o => iodev_req(IODEV_TWD),     dev_10_rsp_i => iodev_rsp(IODEV_TWD),
+      dev_11_req_o => iodev_req(IODEV_CFS),     dev_11_rsp_i => iodev_rsp(IODEV_CFS),
+      dev_12_req_o => iodev_req(IODEV_SLINK),   dev_12_rsp_i => iodev_rsp(IODEV_SLINK),
+      dev_13_req_o => iodev_req(IODEV_DMA),     dev_13_rsp_i => iodev_rsp(IODEV_DMA),
+      dev_14_req_o => open,                     dev_14_rsp_i => rsp_terminate_c, -- reserved
+      dev_15_req_o => open,                     dev_15_rsp_i => rsp_terminate_c, -- reserved
+      dev_16_req_o => iodev_req(IODEV_PWM),     dev_16_rsp_i => iodev_rsp(IODEV_PWM),
+      dev_17_req_o => iodev_req(IODEV_GPTMR),   dev_17_rsp_i => iodev_rsp(IODEV_GPTMR),
+      dev_18_req_o => iodev_req(IODEV_ONEWIRE), dev_18_rsp_i => iodev_rsp(IODEV_ONEWIRE),
+      dev_19_req_o => iodev_req(IODEV_TRACER),  dev_19_rsp_i => iodev_rsp(IODEV_TRACER),
+      dev_20_req_o => iodev_req(IODEV_CLINT),   dev_20_rsp_i => iodev_rsp(IODEV_CLINT),
+      dev_21_req_o => iodev_req(IODEV_UART0),   dev_21_rsp_i => iodev_rsp(IODEV_UART0),
+      dev_22_req_o => iodev_req(IODEV_UART1),   dev_22_rsp_i => iodev_rsp(IODEV_UART1),
+      dev_23_req_o => iodev_req(IODEV_SDI),     dev_23_rsp_i => iodev_rsp(IODEV_SDI),
+      dev_24_req_o => iodev_req(IODEV_SPI),     dev_24_rsp_i => iodev_rsp(IODEV_SPI),
+      dev_25_req_o => iodev_req(IODEV_TWI),     dev_25_rsp_i => iodev_rsp(IODEV_TWI),
+      dev_26_req_o => iodev_req(IODEV_TRNG),    dev_26_rsp_i => iodev_rsp(IODEV_TRNG),
+      dev_27_req_o => iodev_req(IODEV_WDT),     dev_27_rsp_i => iodev_rsp(IODEV_WDT),
+      dev_28_req_o => iodev_req(IODEV_GPIO),    dev_28_rsp_i => iodev_rsp(IODEV_GPIO),
+      dev_29_req_o => iodev_req(IODEV_NEOLED),  dev_29_rsp_i => iodev_rsp(IODEV_NEOLED),
+      dev_30_req_o => iodev_req(IODEV_SYSINFO), dev_30_rsp_i => iodev_rsp(IODEV_SYSINFO),
+      dev_31_req_o => iodev_req(IODEV_OCD),     dev_31_rsp_i => iodev_rsp(IODEV_OCD)
+    );
+```
+
+This massive instantiation enables the CFS if configured. It will assign the base address and at the same time map the correct bus request and response signals to the respective ports:
+
+```
+dev_11_req_o => iodev_req(IODEV_CFS),     dev_11_rsp_i => iodev_rsp(IODEV_CFS),
+```
+
+
+
+### The example
+
+The provided CFS example
 
