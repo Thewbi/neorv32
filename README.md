@@ -3,9 +3,53 @@
 # NEORV32 Documents
 
 Notes and materials on the NEORV32 VHDL CPU
-
+<!--
 [ToC]
 [[_TOC_]]
+-->
+
+<!--
+
+Regenerating the TOC:
+
+Install VSCode extension Markdown TOC by Joffrey Kern.
+
+1. Open any markdown file
+2. Open the command palette (Ctrl+Shift+P)
+3. Type "Generate"
+4. Choose "Generate TOC for markdown"
+
+-->
+
+<!-- vscode-markdown-toc -->
+1. [Select the Mnemonic](#SelecttheMnemonic)
+2. [Select the Encoding](#SelecttheEncoding)
+3. [Extending the Execution Engine Microcode](#ExtendingtheExecutionEngineMicrocode)
+4. [Strategies for Writing Applications](#StrategiesforWritingApplications)
+5. [The Standard Approach using a Toolchain and Makefiles](#TheStandardApproachusingaToolchainandMakefiles)
+6. [Setup the toolchain and the build environment](#Setupthetoolchainandthebuildenvironment)
+7. [Compiling](#Compiling)
+8. [Analysing the Assembly Listing](#AnalysingtheAssemblyListing)
+9. [Initializing the C-runtime](#InitializingtheC-runtime)
+10. [Symmetric Multi Processing, Hart 0 Check](#SymmetricMultiProcessingHart0Check)
+11. [Summary](#Summary)
+12. [Write a simple main() function](#Writeasimplemainfunction)
+13. [Editing the Main Function](#EditingtheMainFunction)
+14. [Inline Assembly](#InlineAssembly)
+	14.1. [String Concatenation](#StringConcatenation)
+	14.2. [Replacing Placeholders](#ReplacingPlaceholders)
+	14.3. [In- and out-parameters](#In-andout-parameters)
+	14.4. [Usage](#Usage)
+15. [Extending the NEORV32 via the Custom Functions Unit (CFU)](#ExtendingtheNEORV32viatheCustomFunctionsUnitCFU)
+	 15.1. [Merge/Pull Request that added the CFU](#MergePullRequestthataddedtheCFU)
+	 15.2. [Questions](#Questions)
+16. [Extending the NEORV32 via the Custom Functions Subsystem (CFS)](#ExtendingtheNEORV32viatheCustomFunctionsSubsystemCFS)
+
+<!-- vscode-markdown-toc-config
+	numbering=true
+	autoSave=true
+	/vscode-markdown-toc-config -->
+<!-- /vscode-markdown-toc -->
 
 # Credit
 
@@ -171,7 +215,7 @@ by the execution engine as the *debug_valid* signal is low.
 
 Lets add a custom instruction to the NEORV32 RISC-V CPU.
 
-## Select the Mnemonic
+##  1. <a name='SelecttheMnemonic'></a>Select the Mnemonic
 
 The RV32I instructions and their encoding is defined on page 586 of the unprivileged
 RISC-V specification.
@@ -198,7 +242,7 @@ add1 will perform the operation
 rd = rs1 + rs2 + 1
 ```
 
-## Select the Encoding
+##  2. <a name='SelecttheEncoding'></a>Select the Encoding
 
 The encoding of add is R-Type because it is a register (R) instruction.
 
@@ -245,7 +289,7 @@ This means, any funct7 with the scond highest bit set is not of use for the add1
 
 Let's use funct7 of 0b1000000 for add1.
 
-## Extending the Execution Engine Microcode
+##  3. <a name='ExtendingtheExecutionEngineMicrocode'></a>Extending the Execution Engine Microcode
 
 Next, since the Execution Engine checks instructions before executing them, we need to add the add1 instruction to the check.
 
@@ -281,7 +325,7 @@ Next, we need to create machine code that we can copy into rtl\core\neorv32_appl
 because this is the ROM that is synthesized into the NEORV32 CPU for simulating and the NEORV32
 processor will execute the code stored in this ROM when the simulation starts.
 
-## Strategies for Writing Applications
+##  4. <a name='StrategiesforWritingApplications'></a>Strategies for Writing Applications
 
 In order to create machine code, there is a quick and dirty way and a standard approach.
 
@@ -289,7 +333,7 @@ The quick and dirty way is to assemble your machine code by hand according to th
 defined in the RISC-V non priviledged specification. Then paste you machine code into
 rtl\core\neorv32_application_image.vhd
 
-## The Standard Approach using a Toolchain and Makefiles
+##  5. <a name='TheStandardApproachusingaToolchainandMakefiles'></a>The Standard Approach using a Toolchain and Makefiles
 
 The standard approach is to follow the structure outlined in the examples located inside the
 sw\example folder.
@@ -321,7 +365,7 @@ system. Your target is RISC-V for the NEORV32. With that, you are going to need 
 toolchain. FYI, native toolchains produce machine code for the architecture that also runs the
 toolchain itself.
 
-## Setup the toolchain and the build environment
+##  6. <a name='Setupthetoolchainandthebuildenvironment'></a>Setup the toolchain and the build environment
 
 The NEORV32 repository does not come with the cross compiler toolchain prepackaged. Therefore download a
 precompiled gcc toolchain from https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/
@@ -361,7 +405,7 @@ image_gen tool. The image_gen tool produces new neorv32_application_image.vhd fi
 
 The next step will be to compile the example.
 
-## Compiling
+##  7. <a name='Compiling'></a>Compiling
 
 ```
 make all
@@ -406,7 +450,7 @@ Convert the .elf file into an assembly listing:
 riscv-none-elf-objdump --disassemble main.elf > listing.asm
 ```
 
-## Analysing the Assembly Listing
+##  8. <a name='AnalysingtheAssemblyListing'></a>Analysing the Assembly Listing
 
 The assembly listing is ridiculously large. The most important function is the
 main function because it contains the actual source code that the user has written
@@ -462,7 +506,7 @@ with the initialization of the C-runtime, then jumps to the main() function.
 
 crt stands for C-runtime.
 
-## Initializing the C-runtime
+##  9. <a name='InitializingtheC-runtime'></a>Initializing the C-runtime
 
 Let's look at the disassembly for the C runtime initialization.
 
@@ -697,7 +741,7 @@ the embedded variant of RISC-V since it will stop initializing registers after x
 if the symbol __riscv_32e is defined, because the embedded variants of RISC-V only
 contain the first 16 registers as opposed to all 32 registers!
 
-## Symmetric Multi Processing, Hart 0 Check
+##  10. <a name='SymmetricMultiProcessingHart0Check'></a>Symmetric Multi Processing, Hart 0 Check
 
 Firstly, RISC-V, like any other multi processor system, will run the software on all harts.
 To give the user full control over what the harts do, the C-runtime contains code that
@@ -782,7 +826,7 @@ __crt0_main_entry:
   jalr  x1, x12               // call actual main function; put return address in ra
 ```
 
-## Summary
+##  11. <a name='Summary'></a>Summary
 
 Lets provide a small summary of the points discussed so far.
 
@@ -802,7 +846,7 @@ All other harts will sleep. The simulation of the NEORV32 will only show activit
 You should not expect any activity on the other cores unless you trigger the software interrupt
 to wake up the other harts.
 
-## Write a simple main() function
+##  12. <a name='Writeasimplemainfunction'></a>Write a simple main() function
 
 Copy the folder sw\example\hello_world to a new folder. Call that new folder sw\example\add1
 
@@ -844,7 +888,7 @@ Installing application image to ../../../rtl/core/neorv32_application_image.vhd
 make[1]: Leaving directory '/c/Users/lapto/dev/VHDL/neorv32/sw/example/add1'
 ```
 
-## Editing the Main Function
+##  13. <a name='EditingtheMainFunction'></a>Editing the Main Function
 
 As a framework, use a most basic implementation of main.
 
@@ -863,7 +907,7 @@ cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/add1
 make all
 ```
 
-## Inline Assembly
+##  14. <a name='InlineAssembly'></a>Inline Assembly
 
 The next big hurdle is to make the C compiler output the machine code
 for our custom add1 instruction.
@@ -961,7 +1005,7 @@ The syntax is quite cryptic so let's go ahead and discuss the macro one step at 
 Going forward, GCC inline assembly is flexible and it allows us to
 insert data that is read from parameters.
 
-### String Concatenation
+###  14.1. <a name='StringConcatenation'></a>String Concatenation
 
 Firstly, if there are local variables or parameters that should be pasted into the inline
 assembly by value, then prefixing the variable names with a hash character '#'
@@ -972,7 +1016,7 @@ This feature is used in the R-Type macro above for the parameters funct7, funct3
 opcode. This makes sense since funct7, funct3 and opcode are literal values to be
 used as is during encoding and hence they are just concatenated into the output.
 
-### Replacing Placeholders
+###  14.2. <a name='ReplacingPlaceholders'></a>Replacing Placeholders
 
 The next feature is to paste values where placeholders are provided. This is very
 similar to the format string of the printf() function family. With the printf()
@@ -1009,7 +1053,7 @@ reg_%2
 It is hopefully clear by now that the first actual parameter will replce %0 in the format string.
 Same goes for the other parameters in the order specified by the colon-separated list.
 
-### In- and out-parameters
+###  14.3. <a name='In-andout-parameters'></a>In- and out-parameters
 
 The inline assembly *asm ()* keyword allows the programmer to make a distincion between variables
 that go into the inline assembly as inputs and variables that get results assigned once the
@@ -1035,7 +1079,7 @@ instructions into the machine code that the compiler outputs. This works even al
 the compiler and assembler have no clue about the custom mnemonics that you have defined
 as you conduct computer science experiments or work on custom extensions that are not ratified yet.
 
-### Usage
+###  14.4. <a name='Usage'></a>Usage
 
 To use the macro, look at this example:
 
@@ -1181,7 +1225,7 @@ There are two processor-internal options for custom hardware now: the Custom Fun
 
 *Custom Functions Unit (CFU):* The CFU is located right inside the CPU's pipeline. It is intended for custom instructions that implement certain functionality, which is not supported by the official (and supported) RISC-V ISA extensions. These instructions should be rather simple data transformations (like bit-reversal, summing elements in a vector, elementary AES operations, ...) rather than implementing a complete algorithm (even if this is also supported) since the CFU instructions are absolutely CPU-dependent and will stall the core until completed.
 
-## Extending the NEORV32 via the Custom Functions Unit (CFU)
+##  15. <a name='ExtendingtheNEORV32viatheCustomFunctionsUnitCFU'></a>Extending the NEORV32 via the Custom Functions Unit (CFU)
 
 https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
 https://stnolting.github.io/neorv32/#_custom_functions_unit_cfu
@@ -1190,7 +1234,7 @@ https://stnolting.github.io/neorv32/#_custom_functions_unit_cfu
 
 https://stnolting.github.io/neorv32/ug/#_comparative_summary
 
-### Merge/Pull Request that added the CFU
+###  15.1. <a name='MergePullRequestthataddedtheCFU'></a>Merge/Pull Request that added the CFU
 
 The pull request explains the CFU best.
 
@@ -1223,7 +1267,7 @@ neorv32_cfu_cmd7(funct7, rs1, rs2); // funct3 = 111
 
 This new feature was highly inspired by @google's CFU-Playground (https://github.com/google/CFU-Playground) - thanks again to @umarcor for showing me that framework. With some logic plumbing it should be possible to install the CFUs from the CFU-Playground into the NEORV32.
 
-### Questions
+###  15.2. <a name='Questions'></a>Questions
 
 Q: How does the NEORV32 CPU know which CFU to start or to call?
 A: There is only a single CFU module. The module is integrated into the ALU as a coprocessor. Whenever a instruction is executed that uses the predefined custom-0 and custom-1 opcodes (See https://stnolting.github.io/neorv32/#_cfu_instruction_formats), the CFU is called.
@@ -1258,7 +1302,7 @@ Currently the code contains a sample implementation of XTEA. XTEA uses about eig
 
 
 
-## Extending the NEORV32 via the Custom Functions Subsystem (CFS)
+##  16. <a name='ExtendingtheNEORV32viatheCustomFunctionsSubsystemCFS'></a>Extending the NEORV32 via the Custom Functions Subsystem (CFS)
 
 https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
 https://stnolting.github.io/neorv32/#_custom_functions_subsystem_cfs
