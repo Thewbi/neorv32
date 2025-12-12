@@ -1,6 +1,10 @@
+
+
 # NEORV32 Documents
 
 Notes and materials on the NEORV32 VHDL CPU
+
+[ToC]
 
 # Credit
 
@@ -19,7 +23,7 @@ In VSCode, adding
 #warning-ignore-all
 ```
 
-to the top of a VHDL (or any) file will turn of error-squigglies 
+to the top of a VHDL (or any) file will turn of error-squigglies
 which makes it easier to read the file in case the linter is not
 able to resolve all symbols correctly.
 
@@ -47,7 +51,7 @@ GTKWave, Surfer or other waveform viewers.
 The CPU is simulated for the real-time period specified via
 the --stop-time parameter. The simulation takes much longer than
 the specified real time period. It is probably smart to first
-try with 20us instead of 20ms. 20ns is not enough to get the 
+try with 20us instead of 20ms. 20ns is not enough to get the
 CPU to process relevant data.
 
 # Execution Engine
@@ -77,13 +81,13 @@ it hard to debug what instructions the CPU executes during simulation.
 
 # Finding executed instructions
 
-Using only a GHDL simulation and a waveform viewer, it is hard to 
+Using only a GHDL simulation and a waveform viewer, it is hard to
 figure out, which instructions are executed. The reason is that
 the frontend will perform instruction fetches which are to a degree
 independant from the instructions that the backend will execute.
 The frontend has two instruction prefetch buffers.
 
-The backend will execute instructions in the order in which the 
+The backend will execute instructions in the order in which the
 assembly code orders them, there is no reordering. The instructions
 enter the backend via the a structure called 'frontend'. I have not
 yet understood how a simulator such as GHDL decides, which signals
@@ -143,22 +147,22 @@ GHDL will output the following trace:
 
 ![image info](res/images/DebuggingInstructions.png)
 
-REMARK: The surfer trace viewer (https://surfer-project.org/) is used 
+REMARK: The surfer trace viewer (https://surfer-project.org/) is used
 in the image above.
 
-This trace shows that the frontend prefetches instructions in non-intuitive 
-ways. For example the compressed instruction 0x00002b27 is fetched, then 
+This trace shows that the frontend prefetches instructions in non-intuitive
+ways. For example the compressed instruction 0x00002b27 is fetched, then
 0x80028293 is fetched and then 0x00002b27 is fetched again!
 
-The execution engine is displayed in the lower traces thanks to the 
+The execution engine is displayed in the lower traces thanks to the
 debug-signals inserted above.
 
-The *debug_instr* trace contains the instruction that the execution engine 
-sees and the *debug_valid* trace dictates if the execution engine is triggered 
+The *debug_instr* trace contains the instruction that the execution engine
+sees and the *debug_valid* trace dictates if the execution engine is triggered
 to consume the instruction. If the valid signal is low, the execution engine
 ignores the instruction.
 
-The execution engine traces show which instructions are executed by the CPU. 
+The execution engine traces show which instructions are executed by the CPU.
 For example the second fetch of the compressed instruction 0x00002b27 is ignored
 by the execution engine as the *debug_valid* signal is low.
 
@@ -173,11 +177,11 @@ RISC-V specification.
 
 ![image info](res/images/RV32_Instructions.png)
 
-Lets mimic the add instruction and instead of adding two registers, add the 
-first register value to the second register value and on top of that add the 
+Lets mimic the add instruction and instead of adding two registers, add the
+first register value to the second register value and on top of that add the
 constant value 1 to the result.
 
-Lets mimic the add instruction and instead of adding two registers, add the 
+Lets mimic the add instruction and instead of adding two registers, add the
 first register to itself.
 
 Or count the number of bits that are set to 1 in an immediate and return that
@@ -187,7 +191,7 @@ count into the target register.
 add1 rd, rs1, rs2
 ```
 
-add1 will perform the operation 
+add1 will perform the operation
 
 ```
 rd = rs1 + rs2 + 1
@@ -252,9 +256,9 @@ if ((opcode(5) = '0') and (funct3_v /= funct3_sll_c) and (funct3_v /= funct3_sr_
     ((opcode(5) = '1') and (((funct3_v = funct3_sadd_c) and (funct7_v = "0000000")) or -- add
                             ((funct3_v = funct3_sadd_c) and (funct7_v = "0100000")) or -- sub
                             ((funct3_v = funct3_sadd_c) and (funct7_v = "1000000")) or -- add1
-                            ((funct3_v = funct3_slt_c)  and (funct7_v = "0000000")) or 
+                            ((funct3_v = funct3_slt_c)  and (funct7_v = "0000000")) or
                             ((funct3_v = funct3_sltu_c) and (funct7_v = "0000000")) or
-                            ((funct3_v = funct3_xor_c)  and (funct7_v = "0000000")) or 
+                            ((funct3_v = funct3_xor_c)  and (funct7_v = "0000000")) or
                             ((funct3_v = funct3_or_c)   and (funct7_v = "0000000")) or
                             ((funct3_v = funct3_and_c)  and (funct7_v = "0000000")))) then -- base ALU instruction (excluding SLL, SRL, SRA)
     ctrl_nxt.rf_wb_en    <= '1'; -- valid RF write-back (won't happen if exception)
@@ -281,7 +285,7 @@ processor will execute the code stored in this ROM when the simulation starts.
 In order to create machine code, there is a quick and dirty way and a standard approach.
 
 The quick and dirty way is to assemble your machine code by hand according to the RISC-V encoding
-defined in the RISC-V non priviledged specification. Then paste you machine code into 
+defined in the RISC-V non priviledged specification. Then paste you machine code into
 rtl\core\neorv32_application_image.vhd
 
 ## The Standard Approach using a Toolchain and Makefiles
@@ -301,7 +305,7 @@ make all
 ```
 
 The makefiles uses the RISC-V GNU GCC toolchain to build machine code. A toolchain
-is a term for a set of tools that you can use for compiling higher languages into assemly (gcc) 
+is a term for a set of tools that you can use for compiling higher languages into assemly (gcc)
 and for turning the assembly into machine code (as). Also tools that decompile output files back to
 assembly are available (objdump). The toolchain contains a plethora of tools that I have never even
 used yet! It is worthwhile to familiarize yourself with the applications available inside the
@@ -313,7 +317,7 @@ executed, cannot run. Instead we use one computer system to write code for anoth
 
 In our case, you will most likely (we assume) be working on a x86 or a ARM
 system. Your target is RISC-V for the NEORV32. With that, you are going to need a cross compiler
-toolchain. FYI, native toolchains produce machine code for the architecture that also runs the 
+toolchain. FYI, native toolchains produce machine code for the architecture that also runs the
 toolchain itself.
 
 ## Setup the toolchain and the build environment
@@ -390,7 +394,7 @@ linked to become part of applications. .elf is used by Linux to transfer machine
 from the harddrive into RAM for execution in a new process. The respective file format
 on windows would be the PE file format. The GCC toolchain cannot create PE files.
 
-NEORV32 does not use the .elf file but the cross compile toolchain contains the 
+NEORV32 does not use the .elf file but the cross compile toolchain contains the
 objdump tool which extracts RISC-V assembly code from the .elf file. This is important
 for use here since the original source code of the example is written in C but we
 want to analyze the application in assembly code in the following.
@@ -437,15 +441,15 @@ interested in.
      ...
 ```
 
-The main function is not the first set of instructions that are executed! 
+The main function is not the first set of instructions that are executed!
 Instead, the application starts with initializing the C-runtime first.
 
-The instructions mainly come from the code that the toolchain generates for the 
-C-programming language. C has a C-runtime which is a set all functions that solve 
-common problems such as strlen() but also acts as a layer that ports the C language 
+The instructions mainly come from the code that the toolchain generates for the
+C-programming language. C has a C-runtime which is a set all functions that solve
+common problems such as strlen() but also acts as a layer that ports the C language
 to a target by implementing memory handling through malloc() and free() for example.
 
-Some of the C-runtime functions are provided by the compiler which means it is 
+Some of the C-runtime functions are provided by the compiler which means it is
 provided by the gcc cross compiler toolchain. To initialize the C-runtime, a assembly
 file from the NEORV32 repostory is used. This means this file is not part of the
 cross compiler toolchain! You can see that the entire software system is rather complex.
@@ -588,9 +592,9 @@ Disassembly of section .text:
      180:	1c448493          	addi	s1,s1,452 # 1340 <__fini_array_end>
 ```
 
-Disclaimer: I do not pretend to understand exactly what is happening here in all detail. 
+Disclaimer: I do not pretend to understand exactly what is happening here in all detail.
 
-Let's check the most important parts. 
+Let's check the most important parts.
 
 Firstly, when the C-runtime is done initializing, it calls the main() function.
 
@@ -607,7 +611,7 @@ lines earlier.
      134:	20460613          	addi	a2,a2,516 # 334 <main>
 ```
 
-At the very beginning, at address 0x00000000, we find the code contained in 
+At the very beginning, at address 0x00000000, we find the code contained in
 the sw\common\crt0.S file. crt stands for C-runtime. This means this assembly
 file contains all the C-runtime initialization. Remark: This file is provided
 by the NEORV32 repository and not by the cross compiler toolchain for some reason.
@@ -616,7 +620,7 @@ This means that the crt0.s file is linked into the executable at the beginning
 of the address space.
 
 It is easier to read the original assembly code than to read the disassembled
-assembly because the original source file contains human readable symbols and 
+assembly because the original source file contains human readable symbols and
 comments. So let's look at the crt0.s instead of the disassembly listing.
 
 Here is a excerpt from sw\common\crt0.S
@@ -672,24 +676,24 @@ Here is a excerpt from sw\common\crt0.S
 ```
 
 Firstly, the id of the hart that runs the assembly is stored into the register x1.
-The term hart is RISC-V lingo for a CPU core in a multi-core system. 
+The term hart is RISC-V lingo for a CPU core in a multi-core system.
 
-Then the stack pointer is set up. 
+Then the stack pointer is set up.
 
 The global pointer is set up. The global pointer
 is used to point to some global data in RAM. Sometimes, text strings or other data
 is located into RAM by the compiler for later access when the code is executed. The
 global pointer is set such global data in RAM.
 
-The hart is set to machine mode which is the privileged mode as opposed to the 
+The hart is set to machine mode which is the privileged mode as opposed to the
 user mode which is not privileged.
 
 In machine mode, interrupts are turned off.
 
 Then the registers are initalized. Some registers get addresses loaded with the la instruction.
 The rest of the registers are set to 0. Interestingly, the compiler does even respect
-the embedded variant of RISC-V since it will stop initializing registers after x15 
-if the symbol __riscv_32e is defined, because the embedded variants of RISC-V only 
+the embedded variant of RISC-V since it will stop initializing registers after x15
+if the symbol __riscv_32e is defined, because the embedded variants of RISC-V only
 contain the first 16 registers as opposed to all 32 registers!
 
 ## Symmetric Multi Processing, Hart 0 Check
@@ -705,13 +709,13 @@ As is the habit on multi core systems, system-software will start executing on a
 it will keep running on core 0 only!
 
 For the rest of the cores, the system software is executed for a very short time until it
-hits the core 0 check. It will fail the core 0 check on other harts and it will then pend 
-on a software interrupt. 
+hits the core 0 check. It will fail the core 0 check on other harts and it will then pend
+on a software interrupt.
 
-This means that all cores other than core 0 will pend. Pending means that they will go 
-to sleep until the software interrupt is triggered to wake up those cores. 
+This means that all cores other than core 0 will pend. Pending means that they will go
+to sleep until the software interrupt is triggered to wake up those cores.
 
-The system software running on core 0 may decide to wake up the other cores or it may decide 
+The system software running on core 0 may decide to wake up the other cores or it may decide
 to let the cores sleep which effectively turns the multi-core system into a single-core system.
 
 > Prithee lull the Old one back to it's ancient slumber
@@ -755,7 +759,7 @@ We can see that the beqz command (Branch equal zero) will skip the entire sleep 
 since each core will store it's id into x1 as we have analyzed earlier. This is why the register
 x1 is used for the core 0 check.
 
-The sleep code jumps to the *__crt0_sleep* label for sleeping. When the interrupt wakes up the 
+The sleep code jumps to the *__crt0_sleep* label for sleeping. When the interrupt wakes up the
 core, the code returns on the *__crt0_smp_wakeup* label. Eventually, the sleep code will jump
 to the *__crt0_main_entry* symbol. From the *__crt0_main_entry*, the main() function is called.
 This means that system software on the other harts will start executing the same main function
@@ -861,15 +865,15 @@ make all
 ## Inline Assembly
 
 The next big hurdle is to make the C compiler output the machine code
-for our custom add1 instruction. 
+for our custom add1 instruction.
 
 Thinking this requirement through, the
-compiler cannot possibly output the add1 instruction since the add1 
+compiler cannot possibly output the add1 instruction since the add1
 instruction is not part of the RISC-V nonpriviledged specification and
-hence the C-Compiler will not output this instruction because to the 
+hence the C-Compiler will not output this instruction because to the
 compiler it simply does not exist!
 
-The only chance to emit this instruction is to manually output the 
+The only chance to emit this instruction is to manually output the
 machine code. Luckily the compiler has keywords for direct assembly output.
 The process is called *inline assembly*.
 
@@ -885,12 +889,12 @@ asm ("nop")
 asm (".word 0x1234")
 ```
 
-If the assembly code has side effects only instead of manipulating data, 
-then the compiler might not anticipate the side effects and it might decide 
+If the assembly code has side effects only instead of manipulating data,
+then the compiler might not anticipate the side effects and it might decide
 to remove the assembly statements altogether because they are not part of
-any data flow that the compiler can identify. 
+any data flow that the compiler can identify.
 
-If it is required that the assembly code is executed precisely as written 
+If it is required that the assembly code is executed precisely as written
 down, then the compiler is not allowed to optimize the statements.
 
 Obviously the compiler should not throw away or optmizie our
@@ -904,20 +908,20 @@ asm volatile ("nop")
 ```
 
 Remember that the compiler and assembler do not recognize
-the new *add1* mnemonic and therefore direct machine code for the instruction 
+the new *add1* mnemonic and therefore direct machine code for the instruction
 needs to be provided by the software engineer. As the compiler and
 assembler will not perform encoding of the new, custom instruction for use, the idea
 is to perform the encoding manually and emit machine code in form of hex numbers.
 
 Using the *.word* assembler instruction makes it possible to directly insert
-machine code into the assembly. This is required because of the reason 
-discussed above. 
+machine code into the assembly. This is required because of the reason
+discussed above.
 
 ```
 asm volatile (
     ".word
 
-    ... 
+    ...
 ```
 
 NEORV32 has a set of macros that perform instruction encoding using the .word
@@ -953,7 +957,7 @@ All credit goes to Stephan Nolting as always in all this tutorial.
 This is mind-bowling stuff especially if one has never used inline assembly.
 The syntax is quite cryptic so let's go ahead and discuss the macro one step at a time.
 
-Going forward, GCC inline assembly is flexible and it allows us to 
+Going forward, GCC inline assembly is flexible and it allows us to
 insert data that is read from parameters.
 
 ### String Concatenation
@@ -974,14 +978,14 @@ similar to the format string of the printf() function family. With the printf()
 functions, the first parameters is a so-called format string containing placeholders
 followed by variables and values that are replaced where the placeholders are.
 
-This replacement consists of three parts. 
+This replacement consists of three parts.
 
 1. A format string
 1. A way to provide placeholders along with an order (0, 1, 2, ...)
 1. A way to provide the values which also clearly defines an order so that the correct placeholders
 are replaced
 
-The format string of inline assembly is the code inside the asm () keyword itself. 
+The format string of inline assembly is the code inside the asm () keyword itself.
 
 The placeholders are specified using the percent sign '%' followed by natural numbers starting
 with 0 for the first parameter, 1 for the second ...
@@ -1014,15 +1018,15 @@ This is dark compiler magic. I cannot even fathom how this feature is implemente
 In fact, the only thing I can do is to tell you that the *"=r"* string in the colon-separated
 parameter list denotes output parameters whereas the *"r"* string denotes input-parameters.
 
-In the RISC-V encoding schemes, the destination register is always generalized by the *rd* name 
+In the RISC-V encoding schemes, the destination register is always generalized by the *rd* name
 and input register 1 is called *rs1* and input register 2 is called *rs2*
 
-In the encoding macro for R-Type instructions, *rd* is choosen by the compiler since the 
+In the encoding macro for R-Type instructions, *rd* is choosen by the compiler since the
 local variable __return is used as an output parameter (=r). Whichever register __return is
 placed into, that register will be used as *rd* in the statement above.
 
 The input register *rs1* and *rs2* are hand crafted by the macro. The compiler has no say
-in selecting *rs1* and *rs2*, instead it is forced to use the values specified via in 
+in selecting *rs1* and *rs2*, instead it is forced to use the values specified via in
 parameters (r).
 
 This is the explanation of the encoding Macro! It allows you to encode custom RISC-V
@@ -1076,7 +1080,7 @@ return value.
 /**@}*/
 ```
 
-The #define preprocessor instruction defines the symbol neorv32_cfu_r_instr which basically is 
+The #define preprocessor instruction defines the symbol neorv32_cfu_r_instr which basically is
 replaced with the CUSTOM_INSTR_R_TYPE macro.
 
 Next, there are even more define preprocessor statements for each individual custom function.
@@ -1129,7 +1133,7 @@ cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/add1
 make all
 ```
 
-Convert the .elf file into an assembly listing 
+Convert the .elf file into an assembly listing
 
 ```
 riscv-none-elf-objdump --disassemble main.elf > listing.asm
@@ -1165,58 +1169,31 @@ Check that the hex data in the .word instruction matches the encoding you expect
 
 It needs to be the funct7 of the custom add1 instruction!
 
-# Extending the NEORV32 via the Custom Functions Subsystem (CFS)
 
-https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
-https://stnolting.github.io/neorv32/#_custom_functions_subsystem_cfs
+# CFU vs. CFS - Extending the NEORV32 CPU
 
-TODO:
+There are two processor-internal options for custom hardware now: the Custom Functions Subsystem (CFS) and the Custom Functions Unit (CFU).
 
-# Extending the NEORV32 via the Custom Functions Unit (CFU)
+> CFU Complexity. The CFU is *not* intended for complex and CPU-independent functional units that implement complete accelerators (like full block-based AES encryption). These kind of accelerators should be implemented as memory-mapped co-processor via the Custom Functions Subsystem (CFS) to allow CPU-independent operation. A comparative survey of all NEORV32-specific hardware extension/customization options is provided in the user guide section Adding Custom Hardware Modules.
+
+*Custom Functions Subsystem (CFS):* The CFS is a memory-mapped peripheral that is accessed using load/store instructions. It is intended for complex accelerators that - once triggered - perform some "long" processing in a CPU-independent manner (like a complete AES encryption). The CFS also provides the option to implement custom interfaces as it has direct access to special top entity signals.
+
+*Custom Functions Unit (CFU):* The CFU is located right inside the CPU's pipeline. It is intended for custom instructions that implement certain functionality, which is not supported by the official (and supported) RISC-V ISA extensions. These instructions should be rather simple data transformations (like bit-reversal, summing elements in a vector, elementary AES operations, ...) rather than implementing a complete algorithm (even if this is also supported) since the CFU instructions are absolutely CPU-dependent and will stall the core until completed.
+
+## Extending the NEORV32 via the Custom Functions Unit (CFU)
 
 https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
 https://stnolting.github.io/neorv32/#_custom_functions_unit_cfu
 
 > The Custom Functions Unit (CFU) is a functional unit that is integrated right into the CPU’s pipeline. It allows to implement custom RISC-V instructions. This extension option is intended for rather small logic that implements operations, which cannot be emulated in pure software in an efficient way. Since the CFU has direct access to the core’s register file it can operate with minimal data latency.
 
-> CFU Complexity. The CFU is not intended for complex and CPU-independent functional units that implement complete accelerators (like full block-based AES encryption). These kind of accelerators should be implemented as memory-mapped co-processor via the Custom Functions Subsystem (CFS) to allow CPU-independent operation. A comparative survey of all NEORV32-specific hardware extension/customization options is provided in the user guide section Adding Custom Hardware Modules.
-
 https://stnolting.github.io/neorv32/ug/#_comparative_summary
 
-## Questions
+### Merge/Pull Request that added the CFU
 
-Q: How does the NEORV32 CPU know which CFU to start or to call?
-A: There is only a single CFU module. The module is integrated into the ALU as a coprocessor. Whenever a instruction is executed that uses the predefined custom-0 and custom-1 opcodes (See https://stnolting.github.io/neorv32/#_cfu_instruction_formats), the CFU is called.
+The pull request explains the CFU best.
 
-Q: How does the CFU know which instruction has been executed?
-A: All instruction using the opcodes custom-0 (0001011), used for CFU R-Type Instructions and custom-1 (0101011), used for CFU I-Type Instructions are processed by the ALU. Inside the ALU, the CFU entity is instantiated and it gets the funct7, funct3, funct12, rs1 and rs2 port mapped. The flag ctrl_i.alu_cp_cfu decides about if the CFU is activated and starts processing the data or not. ctrl_i.alu_cp_cfu is set during the EX_EXECUTE microcode step of the CPU control (rtl\core\neorv32_cpu_control.vhd)
-
-```
--- CFU: custom RISC-V instructions --
-when opcode_cust0_c | opcode_cust1_c =>
-ctrl_nxt.alu_cp_cfu  <= '1'; -- trigger CFU co-processor
-exe_engine_nxt.state <= EX_ALU_WAIT; -- will be aborted via monitor 
-                                        -- timeout if CFU is not implemented
-```
-
-opcode_cust0_c and opcode_cust1_c are the custom-0 and custom-1 opcodes mentioned above.
-
-```
--- official custom RISC-V opcodes - free for custom instructions --
-  constant opcode_cust0_c  : std_ulogic_vector(6 downto 0) := "0001011"; -- custom-0 (NEORV32 CFU)
-  constant opcode_cust1_c  : std_ulogic_vector(6 downto 0) := "0101011"; -- custom-1 (NEORV32 CFU)
-```
-
-This means, when the EX_EXECUTE microcode step sees the custom opcodes, then it activates the CFU coprocessor inside the ALU. The CFU entity will then process the instructions and look at funct7 and funct3.
-
-There are 1024 (1016 ???) possible custom CFU instructions possible based on the amount of combinations of funct7 and funct3. (2^7 * 2^3 = 1016). The idea is that there will not be one separate CFU entity per extension but instead, every extension will share the same entity.
-
-Currently the code contains a sample implementation of XTEA. XTEA uses about eight custom instructions. The XTEA CFU constains instructions to set and get keys, to perform encryption and decryption.
-
-##
-
-
-https://www.joyk.com/dig/detail/1643814277313172#gsc.tab=0
+https://github.com/stnolting/neorv32/pull/264
 
 With this PR the NEORV32 now provides an option to add custom RISC-V instructions.
 
@@ -1245,8 +1222,45 @@ neorv32_cfu_cmd7(funct7, rs1, rs2); // funct3 = 111
 
 This new feature was highly inspired by @google's CFU-Playground (https://github.com/google/CFU-Playground) - thanks again to @umarcor for showing me that framework. With some logic plumbing it should be possible to install the CFUs from the CFU-Playground into the NEORV32.
 
-### CFU vs. CFS
-There are two processor-internal options for custom hardware now: the Custom Functions Subsystem (CFS) and the Custom Functions Unit (CFU).
+### Questions
 
-Custom Functions Subsystem (CFS): The CFS is a memory-mapped peripheral that is accessed using load/store instructions. It is intended for complex accelerators that - once triggered - perform some "long" processing in a CPU-independent manner (like a complete AES encryption). The CFS also provides the option to implement custom interfaces as it has direct access to special top entity signals.
-Custom Functions Unit (CFU): The CFU is located right inside the CPU's pipeline. It is intended for custom instructions that implement certain functionality, which is not supported by the official (and supported) RISC-V ISA extensions. These instructions should be rather simple data transformations (like bit-reversal, summing elements in a vector, elementary AES operations, ...) rather than implementing a complete algorithm (even if this is also supported) since the CFU instructions are absolutely CPU-dependent and will stall the core until completed.
+Q: How does the NEORV32 CPU know which CFU to start or to call?
+A: There is only a single CFU module. The module is integrated into the ALU as a coprocessor. Whenever a instruction is executed that uses the predefined custom-0 and custom-1 opcodes (See https://stnolting.github.io/neorv32/#_cfu_instruction_formats), the CFU is called.
+
+Q: How does the CFU know which instruction has been executed?
+A: All instruction using the opcodes custom-0 (0001011), used for CFU R-Type Instructions and custom-1 (0101011), used for CFU I-Type Instructions are processed by the ALU. Inside the ALU, the CFU entity is instantiated and it gets the funct7, funct3, funct12, rs1 and rs2 port mapped. The flag ctrl_i.alu_cp_cfu decides about if the CFU is activated and starts processing the data or not. ctrl_i.alu_cp_cfu is set during the EX_EXECUTE microcode step of the CPU control (rtl\core\neorv32_cpu_control.vhd)
+
+```
+-- CFU: custom RISC-V instructions --
+when opcode_cust0_c | opcode_cust1_c =>
+ctrl_nxt.alu_cp_cfu  <= '1'; -- trigger CFU co-processor
+exe_engine_nxt.state <= EX_ALU_WAIT; -- will be aborted via monitor
+                                        -- timeout if CFU is not implemented
+```
+
+opcode_cust0_c and opcode_cust1_c are the custom-0 and custom-1 opcodes mentioned above.
+
+```
+-- official custom RISC-V opcodes - free for custom instructions --
+  constant opcode_cust0_c  : std_ulogic_vector(6 downto 0) := "0001011"; -- custom-0 (NEORV32 CFU)
+  constant opcode_cust1_c  : std_ulogic_vector(6 downto 0) := "0101011"; -- custom-1 (NEORV32 CFU)
+```
+
+This means, when the EX_EXECUTE microcode step sees the custom opcodes, then it activates the CFU coprocessor inside the ALU. The CFU entity will then process the instructions and look at funct7 and funct3.
+
+There are 1024 (1016 ???) possible custom CFU instructions possible based on the amount of combinations of funct7 and funct3. (2^7 * 2^3 = 1016). The idea is that there will not be one separate CFU entity per extension but instead, every extension will share the same entity.
+
+Currently the code contains a sample implementation of XTEA. XTEA uses about eight custom instructions. The XTEA CFU constains instructions to set and get keys, to perform encryption and decryption.
+
+
+
+
+
+
+## Extending the NEORV32 via the Custom Functions Subsystem (CFS)
+
+https://stnolting.github.io/neorv32/ug/#_custom_functions_subsystem
+https://stnolting.github.io/neorv32/#_custom_functions_subsystem_cfs
+
+TODO:
+
