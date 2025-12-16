@@ -4,52 +4,55 @@
 
 Notes and materials on the NEORV32 VHDL CPU
 <!--
-[ToC]
-[[_TOC_]]
--->
 
-<!--
-
-Regenerating the TOC:
-
-Install VSCode extension Markdown TOC by Joffrey Kern.
-
-1. Open any markdown file
-2. Open the command palette (Ctrl+Shift+P)
-3. Type "Generate"
-4. Choose "Generate TOC for markdown"
+This TOC extension really works
+Auto Markdown TOC  v3.0.15 by Hunter Tran
 
 -->
+<!-- -->
 
-<!-- vscode-markdown-toc -->
-1. [Select the Mnemonic](#SelecttheMnemonic)
-2. [Select the Encoding](#SelecttheEncoding)
-3. [Extending the Execution Engine Microcode](#ExtendingtheExecutionEngineMicrocode)
-4. [Strategies for Writing Applications](#StrategiesforWritingApplications)
-5. [The Standard Approach using a Toolchain and Makefiles](#TheStandardApproachusingaToolchainandMakefiles)
-6. [Setup the toolchain and the build environment](#Setupthetoolchainandthebuildenvironment)
-7. [Compiling](#Compiling)
-8. [Analysing the Assembly Listing](#AnalysingtheAssemblyListing)
-9. [Initializing the C-runtime](#InitializingtheC-runtime)
-10. [Symmetric Multi Processing, Hart 0 Check](#SymmetricMultiProcessingHart0Check)
-11. [Summary](#Summary)
-12. [Write a simple main() function](#Writeasimplemainfunction)
-13. [Editing the Main Function](#EditingtheMainFunction)
-14. [Inline Assembly](#InlineAssembly)
-	14.1. [String Concatenation](#StringConcatenation)
-	14.2. [Replacing Placeholders](#ReplacingPlaceholders)
-	14.3. [In- and out-parameters](#In-andout-parameters)
-	14.4. [Usage](#Usage)
-15. [Extending the NEORV32 via the Custom Functions Unit (CFU)](#ExtendingtheNEORV32viatheCustomFunctionsUnitCFU)
-	 15.1. [Merge/Pull Request that added the CFU](#MergePullRequestthataddedtheCFU)
-	 15.2. [Questions](#Questions)
-16. [Extending the NEORV32 via the Custom Functions Subsystem (CFS)](#ExtendingtheNEORV32viatheCustomFunctionsSubsystemCFS)
+- [NEORV32 Documents](#neorv32-documents)
+- [Credit](#credit)
+- [Links](#links)
+- [Tips](#tips)
+- [Simulation](#simulation)
+- [Execution Engine](#execution-engine)
+- [Finding executed instructions](#finding-executed-instructions)
+- [Adding custom instructions](#adding-custom-instructions)
+    - [Select the Mnemonic](#select-the-mnemonic)
+    - [Select the Encoding](#select-the-encoding)
+    - [Extending the Execution Engine Microcode](#extending-the-execution-engine-microcode)
+- [Writing an application that uses the new instruction](#writing-an-application-that-uses-the-new-instruction)
+    - [Strategies for Writing Applications](#strategies-for-writing-applications)
+    - [The Standard Approach using a Toolchain and Makefiles](#the-standard-approach-using-a-toolchain-and-makefiles)
+    - [Setup the toolchain and the build environment](#setup-the-toolchain-and-the-build-environment)
+    - [Compiling](#compiling)
+    - [Analysing the Assembly Listing](#analysing-the-assembly-listing)
+    - [Initializing the C-runtime](#initializing-the-c-runtime)
+    - [Symmetric Multi Processing, Hart 0 Check](#symmetric-multi-processing-hart-0-check)
+    - [Summary](#summary)
+    - [Write a simple main function](#write-a-simple-main-function)
+    - [Editing the Main Function](#editing-the-main-function)
+    - [Inline Assembly](#inline-assembly)
+        - [String Concatenation](#string-concatenation)
+        - [Replacing Placeholders](#replacing-placeholders)
+        - [In- and out-parameters](#in--and-out-parameters)
+        - [Usage](#usage)
+- [The bootloader](#the-bootloader)
+- [CFU vs. CFS - Extending the NEORV32 CPU](#cfu-vs-cfs---extending-the-neorv32-cpu)
+    - [Extending the NEORV32 via the Custom Functions Unit CFU](#extending-the-neorv32-via-the-custom-functions-unit-cfu)
+        - [Merge/Pull Request that added the CFU](#mergepull-request-that-added-the-cfu)
+        - [Questions](#questions)
+    - [Extending the NEORV32 via the Custom Functions Subsystem CFS](#extending-the-neorv32-via-the-custom-functions-subsystem-cfs)
+        - [The interface of CFS](#the-interface-of-cfs)
+        - [Bus Requests / Responses](#bus-requests--responses)
+        - [Writing Software that uses CFS](#writing-software-that-uses-cfs)
+        - [The example](#the-example)
+- [The FPU Zfinx](#the-fpu-zfinx)
+    - [Triggering the FPU](#triggering-the-fpu)
 
-<!-- vscode-markdown-toc-config
-	numbering=true
-	autoSave=true
-	/vscode-markdown-toc-config -->
-<!-- /vscode-markdown-toc -->
+<!-- /TOC -->
+
 
 # Credit
 
