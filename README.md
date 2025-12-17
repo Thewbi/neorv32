@@ -2053,7 +2053,7 @@ A very good graphical explanation is available in the slides https://eupilot.eu/
 
 Let's start by looking at page 14. Here, the assumption is that the synthesis time VLEN constant is 128 meaning, every vector register is 128 bit wide. Using the vsetvli instruction, the user now configures the vector engine and especially the vtype first.
 
-![image info](res/images/vector_engine_page_23.png)
+![image info](res/images/vector_engine_page_14.png)
 
 Page 14 shows, what is possible to do with a single vector register of 128 bit width. It fits two 64 bit elements (= elements of the vectors to process), 4 32bit elements, 8 16bit elements or it fits 16 8bit elements.
 
