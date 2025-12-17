@@ -2012,7 +2012,9 @@ Means of a RISC-V chip with V-Extension, the application code needs to set mstat
 
 3.5. Vector Length Register vl - page 14
 
-TODO - very complicated ...
+The setvli instruction is used to configure the vector engine. This is explained below. The vl register is the result of such a configuration and stores the element operation that the vector engine commits to. It tells the user how many operations of the requested configuration it can really perform. This factual number of parallel operations is then transferred into the vl register.
+
+The concept will become clear as more explanation and examples are given below.
 
 3.6. Vector Byte Length vlenb - page 14
 
@@ -2051,7 +2053,9 @@ A very good graphical explanation is available in the slides https://eupilot.eu/
 
 Let's start by looking at page 14. Here, the assumption is that the synthesis time VLEN constant is 128 meaning, every vector register is 128 bit wide. Using the vsetvli instruction, the user now configures the vector engine and especially the vtype first.
 
-Page 14 shows, what is possible to do with a single vector regsiter of 128 bit width. It fits two 64 bit elements (= elements of the vectors to process), 4 32bit elements, 8 16bit elements or it fits 16 8bit elements.
+![image info](res/images/vector_engine_page_23.png)
+
+Page 14 shows, what is possible to do with a single vector register of 128 bit width. It fits two 64 bit elements (= elements of the vectors to process), 4 32bit elements, 8 16bit elements or it fits 16 8bit elements.
 
 Lets say that the user wants to add 16 8bit elements.
 
