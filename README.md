@@ -11,6 +11,8 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
 -->
 <!-- -->
 
+<!-- TOC -->
+
 - [NEORV32 Documents](#neorv32-documents)
 - [Credit](#credit)
 - [Links](#links)
@@ -50,6 +52,13 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
         - [The example](#the-example)
 - [The FPU Zfinx](#the-fpu-zfinx)
     - [Triggering the FPU](#triggering-the-fpu)
+- [Extending NEORV32 by the Vector V Extension](#extending-neorv32-by-the-vector-v-extension)
+    - [V Extension Hardware Additions](#v-extension-hardware-additions)
+    - [New Registers](#new-registers)
+    - [Configuring the Vector-Engine](#configuring-the-vector-engine)
+    - [Loading data](#loading-data)
+    - [Performing a vector operation](#performing-a-vector-operation)
+    - [Performing a save operation](#performing-a-save-operation)
 
 <!-- /TOC -->
 
