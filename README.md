@@ -1194,7 +1194,7 @@ Convert the .elf file into an assembly listing
 riscv-none-elf-objdump --disassemble main.elf > listing.asm
 ```
 
-or just use the existing main.asm which is created by the build.system
+or just use the existing main.asm which is created by the build system
 automatically.
 
 The main function looks like this:
@@ -1889,7 +1889,7 @@ If any co-processor is ready, the ALU is ready. Seems like a hazard to me but le
 
 Back to the Zfinx FPU co-processor itself.
 
-When it it active, it needs to decode the instruction. To decode the instruction it first have to acces to the instruction. This is implemented via the main control bus to which the co-processor has access to via a in-port.
+When it is active, it needs to decode the instruction. To decode the instruction it first have to acces to the instruction. This is implemented via the main control bus to which the co-processor has access to via a in-port.
 
 ```
 ctrl_i      : in  ctrl_bus_t; -- main control bus
@@ -1948,7 +1948,7 @@ Once the internal control engine is done, the co-processor sets it's own output 
 valid_o <= ctrl_engine.valid;
 ```
 
-Remembering the large OR for all co-processor valid flags in the ALU? Setting the local valid_o port, will make the parent ALU to set it's done flag which is checked by the main-execution-engine's EX_ALU_WAIT. This is where the loop is closed and things come together nicely.
+Remember the large OR for all co-processor valid flags in the ALU? Setting the local valid_o port, will make the parent ALU to set it's done flag which is checked by the main-execution-engine's EX_ALU_WAIT. This is where the loop is closed and things come together nicely.
 
 I must admit, the rest of the coprocessor is not that easy to understand and not easy to explain. One would need to understand the details of computing floating point numbers.
 
@@ -1957,3 +1957,229 @@ I can tell that there are many processes that will check for specific instructio
 The co-processor design also instantiates entities in order to perform all computation. The design is roughly split into floating point processing, a normalizer and rounding unit and a float to int converter unit.
 
 The entire design is pretty elaborate. It might be the largest entitiy I have seen so far ...
+
+# Extending NEORV32 by the Vector (V) Extension
+
+https://rvv-isadoc.readthedocs.io/en/latest/
+
+The [R]ISC-[V] [V]ector (RVV) Extension, also known as V extension adds extra hardware to speed up vector operations. Vector operations are SIMD, where a single machine instruction can cause parallel operations on several data items at once.
+
+In the case of vectors, one example of this optimization is that when adding two vectors (c = a + b) a SISD approach is to loop over all indexes and perform a ALU-add operation per Vector-element until the two vectors are added. This causes a complexity of roughly O(n). When the CPU has the V extension implemented, there are several ALU blocks and a vector can be added in a SIMD fashion where there might be a loop still, but this time instead of element per element, an entire batch of elements are added in one go. We are still in the complexity of O(n) but the system should finish the operation in less cycles which makes a real-world difference and causes a speed-up at the cost of added hardware.
+
+Vector and Matrix operations are heavily used in AI tasks, which is why RISC-V needs Vector and Matrix solutions to stay relevant as a competitor to the likes of NVidia and AMD with their GPU solutions. Also the chinese market produces AI solutions at a rapid pace closing the distance to the american solutions. Amazon produces custom solutions with their new line of Trainium3 chips.
+
+## V Extension Hardware Additions
+
+Looking at the RISC-V "V" Vector Extension Version 1.0 document: https://github.com/riscvarchive/riscv-v-spec/releases/download/v1.0/riscv-v-spec-1.0.pdf the following new hardware has to be added.
+
+2. Implementation-defined Constant Parameters - page 8
+
+> The number of bits in a single vector register, VLEN ≥ ELEN, which must be a power of 2, and must be no greater than 2^16.
+
+Each RISC-V CPU has a XLEN constant. XLEN dictates the bit width of the RISC-V chip. A VLEN of 32 says that all RV32 instructions are available. a VLEN of 64 adds the addw instruction for example which makes it possible to add 64 bit numbers.
+
+The V-Extension adds a new constant called VLEN. Similar to XLEN, VLEN dictates the width of the vector-registers in bits. A VLEN of 128 says that each vector-register is 128 bits wide.
+
+VLEN is stored in some registers, specifically the CSR vl and CSR vlenb. The CSRs are defined on page 9 of the RVV spec. More to that later.
+
+## New Registers
+
+3. Vector Extension Programmer’s Model - page 9
+
+> The vector extension adds 32 vector registers, and seven unprivileged CSRs (vstart, vxsat, vxrm, vcsr, vtype, vl, vlenb) to a base scalar RISC-V ISA.
+
+3.1. Vector Registers - page 9
+
+> The vector extension adds 32 architectural vector registers, v0-v31 to the base scalar RISC-V ISA.
+Each vector register has a fixed VLEN bits of state.
+
+VLEN is the synthesis time constant explained above!
+
+3.2. Vector Context Status in mstatus - page 9
+
+> Attempts to execute any vector instruction, or to access the vector CSRs, raise an illegal-instruction exception when mstatus.VS is set to Off.
+
+Means of a RISC-V chip with V-Extension, the application code needs to set mstatus.VS flag to 1 before executing any Vector-Extension code! Otherwise an exception is raised.
+
+3.5. Vector Length Register vl - page 14
+
+TODO - very complicated ...
+
+3.6. Vector Byte Length vlenb - page 14
+
+> The XLEN-bit-wide read-only CSR vlenb holds the value VLEN/8, i.e., the vector register length in bytes.
+
+This means that at runtime, reading from the CSR vlenb, the application can retrieve the value of the VLEN synthesis time constant in the form of bytes instead of bits!
+
+## Configuring the Vector-Engine
+
+Using the V-Extension means using the vector engine. The vector engine is implementation dependant in the amount of parallel ALU-nodes that it has.
+
+As an example, if the implementation provides 4 ALU-nodes, then the vector engine can add 4 elements at a time. If it has 1024 ALU-nodes it can add 1024 elements at a time.
+
+The V-extension defines a two step process. First, the user poses a request which may or may not be satisfied by the vector engine. A kind of handshake or communication pattern between the user and the vector engine starts. The user uses the vsetvli instruction to specify the vtype that they want to use. The vtype says how large a vector element is and how many of those elements they want to compute in parallel in one go.
+
+The vector engine then checks if it can satisfy the request and returns a value that it really can satify. For example if it only has four ALI-nodes than it will return a vl of 4.
+
+Then in a second step, the application needs to react to the vl returned by the vector engine. The application now needs to start a strip-mining loop. Strip-mining is the process of peace-wise feeding parts of the vector to the vector engine until the entire vector is processed. For example if the application wants to add two vectors with 128 elements and the vector extension returns a vl of 16, then the application has to strip-mine the vectors in 128 / 16 = 8 iterations until all elements have been added. Each iteration uses all 16 ALU nodes in parallel. This brings down the vector addition from 128 iterations to 8.
+
+A small example of this process is given here, without the strip mining loop.
+
+```
+    li              t0, 16
+    vsetvli         t0, t0, e8,m1,tu,mu
+
+    li              t0, 1
+
+    vle8.v          v0, (a0)
+    vadd.vx         v0, v0, t0
+    vse8.v          v0, (a0)
+```
+
+Here, the vsetvli instruction is called before the other vector extension instructions.
+
+A very good graphical explanation is available in the slides https://eupilot.eu/wp-content/uploads/2022/11/RISC-V-VectorExtension-1-1.pdf by Roger Ferrer Ibáñez.
+
+Let's start by looking at page 14. Here, the assumption is that the synthesis time VLEN constant is 128 meaning, every vector register is 128 bit wide. Using the vsetvli instruction, the user now configures the vector engine and especially the vtype first.
+
+Page 14 shows, what is possible to do with a single vector regsiter of 128 bit width. It fits two 64 bit elements (= elements of the vectors to process), 4 32bit elements, 8 16bit elements or it fits 16 8bit elements.
+
+Lets say that the user wants to add 16 8bit elements.
+
+They formulate their request as such:
+
+```
+    li              t0, 16
+    vsetvli         t0, t0, e8,m1,tu,mu
+```
+
+This means: Dear vector engine, please configure yourself to process 16 8bit elements using a group size of 8.
+
+The second parameter to vsetvli contains the value 16 which is the so called AVL ::= Application Vector Length. It is a user request maybe the vector engine cannot fulfill. The vl value is the value that the vector engine returns into the register specified as first parameter.
+
+The e8 argument is a value for the SEW ::= Selected Element Width. This is where the user specifies the size in bits of a single vector element to perform computation on. In this case the vector should be a vector of eight bit uint8_t elements.
+
+The m1 argument is the LMUL argument ::= which is the amount of vector registers to combine. In this case the user wants the vector engine to combine only a single vector register (We assume VLEN=128 = 128 bit per vector register.)
+
+Now the vsetvli instruction is processed and the vector engine will return vl into the first register.
+
+Next we need to look at page 23 to understand what the decision of the execution engine will be based on.
+
+On this diagram, you can see what operation the vector engine tries to execute, when vadd is called for adding two vectors together for example.
+
+![image info](res/images/vector_engine_page_23.png)
+
+To satisfy the users AVL, SEW and LMUL request, an amount of ALU nodes need to be present in hardware.
+
+For the upper example in the image, VLEN is 128bits, the user wants a SEW of 64bit and an LMUL of 1 (= only a single vector register is used per vector). Then this yields two additions in parallel. In other words, the vector engine has to have two available ALU nodes to satisfy this request. If it has two ALU nodes, the vector engine will answers with a vl of 2. When the operation vadd.vv v6, v4, v5 is executed, the execution engine will add v4 to v5 and store the result in v6. Because each vector register contains two elements, two ALU-nodes are used to compute two results in parallel.
+
+In the lower example in the image, VLEN is still 128bits, this time, the user wants a SEW of 32bit still using a group size of LMUL=1 meaning only a single vector register is used. This yields an addition of four pairs in parallel. The vector engine now needs four ALU-nodes to serve this operation in parallel. If it has four ALU nodes, the vector engine will answers with a vl of 4. When the operation vadd.vv v6, v4, v5 is executed, the execution engine will add v4 to v5 and store the result in v6. Because each vector register contains four elements, four ALU-nodes are used to compute two results in parallel.
+
+On the next page, page 24, there is an example where vl is 3! This is also possible, it is possible to perform less than a full range of elements. This is the case if the vector engine has an odd number of ALU-units available and vsetvli returns a vl of 3 for example.
+
+Page 20 shows an example where the user increases the group size to LMUL=2. Now the users wants to combine two vector registers for higher parallelism. With VLEN of 128 bit, a selected element width SEW=8 and a an AVL of 16 and an LMUL=2, there are 16 elements spread accross two vector registers. In order to satisfy this request, the vector engine now needs 16 ALU-nodes. If it has less, it will return s smaller vl. If it has 16 ALU-nodes or more, it will return a vl of 16. Then 16 add operations are performed in parallel.
+
+As another example:
+
+For example, each element is 32 bit and they want 8 elements per vector, in other words compute eight elements in parallel. With VLEN 128 meaning each vector register is 128 bit, a LMUL of 2 is required for 8 32 bit elements in two vector registers. VLEN=128 / SEW=32 * LMUL = 8 <=> LMUL = 2 = 8 * 32 / 128. So the user would set lmul to 2.
+
+## Loading data
+
+Next step is loading data into the vector registers.
+
+Before performing any element wise addition, subtraction or any other operation between vectors, the vector register need to be loaded with data from memory.
+
+The vle8.v instruction is used to perform this task for eight bit elements for example. Lets assume the vector engine has been configured to proces 16 of 8 bit elements in parallel and it has answered with a vl of 16, meaning it has all 16 required ALU-nodes available, then this operation can be performed.
+
+Here is an example:
+
+```
+.text
+    .global main
+main:
+    la              a0, vdata_start
+
+    # configure vector engine
+    li              t0, 16
+    vsetvli         t0, t0, e8,m1,tu,mu
+
+    li              t0, 1
+
+    # load
+    vle8.v          v0, (a0)
+
+    # execute
+    vadd.vx         v0, v0, t0
+
+    # store
+    vse8.v          v0, (a0)
+
+    la              a0, vdata_start
+    la              a1, vdata_end
+    j               spill_cache
+```
+
+Because vl of 16 is configured internally, the vle8.v command will implicitly use vl of 16 and load 16 uint8_t 8-bit values starting from address stored in a0 into the vector register v0.
+
+## Performing a vector operation
+
+The next step in the example is the vadd.vx instruction.
+
+```
+vadd.vx         v0, v0, t0
+```
+
+It will add a scalar stored in t1 to the elements of the vector stored in vector register v0 and store the result of the operation into the target vector register v0.
+
+The vector engine will now use all 16 ALU-nodes to process all 16 scalar add operations in parallel.
+
+## Performing a save operation
+
+Next we transfer the vector register back to memory. A store operation is used.
+
+```
+vse8.v          v0, (a0)
+```
+
+The vector registser v0 start stores the result is transferred to memory at the address that is stored inside the a0 register.
+
+Looking at the memory content that is prepared for this example, it can be seen that only the first 16 values are affected by this operation as one would expect with the vector engine configuration.
+
+Here is the test data for the memory content before and after the execution of the above application:
+
+Source Data:
+
+```
+    .data
+    .align 10
+    .global vdata_start
+    .global vdata_end
+vdata_start:
+    .word           0x323b3f47
+    .word           0x47434b3a
+    .word           0x302f2e32
+    .word           0xe8404a51
+    .word           0x3f44383b
+    .word           0x37424d54
+    .word           0x5e4b5049
+```
+
+Expected target data:
+
+```
+    .align 10
+    .global vref_start
+    .global vref_end
+vref_start:
+    .word           0x333c4048
+    .word           0x48444c3b
+    .word           0x31302f33
+    .word           0xe9414b52
+    .word           0x3f44383b
+    .word           0x37424d54
+    .word           0x5e4b5049
+```
+
+16 8bit values are four rows in the above memory dump. This means it is expected that the first four rows have been incremented by a scalar value of 1 and all the subsequent rows are unchanged because the vector engine was configured to perform 16 8bit operations in parallel.
+
+This is the case. The values 0x3f44383b and following are unchanged. The rows above 0x3f44383b have been incremented element wise by 1.
