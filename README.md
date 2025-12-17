@@ -59,6 +59,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Loading data](#loading-data)
     - [Performing a vector operation](#performing-a-vector-operation)
     - [Performing a save operation](#performing-a-save-operation)
+    - [Strip-Mining example](#strip-mining-example)
 
 <!-- /TOC -->
 
@@ -2066,15 +2067,15 @@ They formulate their request as such:
     vsetvli         t0, t0, e8,m1,tu,mu
 ```
 
-This means: Dear vector engine, please configure yourself to process 16 8bit elements using a group size of 8.
+This means: Dear vector engine, please configure yourself to process 16 8bit elements (e8) using a group size of 1 (m1).
 
-The second parameter to vsetvli contains the value 16 which is the so called AVL ::= Application Vector Length. It is a user request maybe the vector engine cannot fulfill. The vl value is the value that the vector engine returns into the register specified as first parameter.
+The second parameter to vsetvli contains the value 16 which is the so called AVL ::= Application Vector Length. It is a user request which maybe the vector engine cannot fulfill. To check what the vector engine really will commit to, the return value to the vestvli instruction is the vl-value. The vl value is the value that the vector engine returns into the register specified as first parameter. Also the vl value is written into the vl register!
 
 The e8 argument is a value for the SEW ::= Selected Element Width. This is where the user specifies the size in bits of a single vector element to perform computation on. In this case the vector should be a vector of eight bit uint8_t elements.
 
-The m1 argument is the LMUL argument ::= which is the amount of vector registers to combine. In this case the user wants the vector engine to combine only a single vector register (We assume VLEN=128 = 128 bit per vector register.)
+The m1 argument is the LMUL argument ::= which is the amount of vector registers to combine also known as the group. In this case the user wants the vector engine to combine only a single vector register (We assume VLEN=128 = 128 bit per vector register.)
 
-Now the vsetvli instruction is processed and the vector engine will return vl into the first register.
+Now the vsetvli instruction is processed and the vector engine will return vl into the first register and into the vl register.
 
 Next we need to look at page 23 to understand what the decision of the execution engine will be based on.
 
@@ -2102,7 +2103,7 @@ Next step is loading data into the vector registers.
 
 Before performing any element wise addition, subtraction or any other operation between vectors, the vector register need to be loaded with data from memory.
 
-The vle8.v instruction is used to perform this task for eight bit elements for example. Lets assume the vector engine has been configured to proces 16 of 8 bit elements in parallel and it has answered with a vl of 16, meaning it has all 16 required ALU-nodes available, then this operation can be performed.
+The vle8.v instruction is used to perform this task for eight bit elements for example. Lets assume the vector engine has VLEN=128 bit and it has been configured to proces 16 of 8 bit elements in parallel and it has answered with a vl of 16, meaning it has all 16 required ALU-nodes available, then this operation can be performed.
 
 Here is an example:
 
@@ -2154,7 +2155,7 @@ Next we transfer the vector register back to memory. A store operation is used.
 vse8.v          v0, (a0)
 ```
 
-The vector registser v0 start stores the result is transferred to memory at the address that is stored inside the a0 register.
+The vector register v0 start stores the result is transferred to memory at the address that is stored inside the a0 register.
 
 Looking at the memory content that is prepared for this example, it can be seen that only the first 16 values are affected by this operation as one would expect with the vector engine configuration.
 
@@ -2196,3 +2197,53 @@ vref_start:
 16 8bit values are four rows in the above memory dump. This means it is expected that the first four rows have been incremented by a scalar value of 1 and all the subsequent rows are unchanged because the vector engine was configured to perform 16 8bit operations in parallel.
 
 This is the case. The values 0x3f44383b and following are unchanged. The rows above 0x3f44383b have been incremented element wise by 1.
+
+## Strip-Mining example
+
+Here is an exmaple that a gcc compiler has generated from the vvadddin32() function.
+The vvadddin32() has a size_t parameter that will store the length of the two vectors.
+The length is therefore a dynamic parameter and very large vectors can be added using the
+vvadddin32() function.
+
+This will cause the compiler to emit a strip mining solution, where in each iteration the vector engine is reconfigured using vsetvli and in each iteration a batch of the vector is computed until the task is done. This iterative approach is called strip-mining.
+
+In each iteration the current batch is performed in parallel using all ALU-nodes that the vector extension has available.
+
+```
+# vector-vector add routine of 32-bit integers
+#
+# void vvaddint32(size_t n, const int*x, const int*y, int*z)
+# {
+#	for (size_t i=0; i<n; i++)
+#   {
+#      z[i] = x[i] + y[i];
+#   }
+# }
+#
+# Mapping parameters to argument register (a0 .. a7)
+# a0 = n, a1 = x, a2 = y, a3 = z
+#
+# Non-vector instructions are indented
+vvaddint32:
+	vsetvli t0, a0, e32, ta, ma 	# Set vector length based on 32-bit vectors. t0 contains the amount of elements that will be processed
+
+	vle32.v v0, (a1) 				# Get first vector
+
+		# can I move these two instructions up over vle32.v ???
+		sub a0, a0, t0 				# Decrement number of elements that still need processing.
+									# t0 is the result of vsetvli. It is the amount of elements processed this iteration
+		slli t0, t0, 2 				# Multiply number done by 4 bytes (= 32 bit integer) because of SEW=e32
+
+		add a1, a1, t0 				# Bump pointer for first vector
+
+	vle32.v v1, (a2) 				# Get second vector
+		add a2, a2, t0 				# Bump pointer for second vector
+
+	vadd.vv v2, v0, v1 			    # Sum vectors
+
+	vse32.v v2, (a3) 				# Store result
+		add a3, a3, t0 				# Bump pointer
+
+		bnez a0, vvaddint32 		# Loop back
+		ret 						# Finished
+```
