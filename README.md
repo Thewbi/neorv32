@@ -2028,7 +2028,7 @@ This means that at runtime, reading from the CSR vlenb, the application can retr
 
 https://github.com/riscvarchive/riscv-v-spec/blob/master/v-spec.adoc#6-configuration-setting-instructions-vsetvlivsetivlivsetvl
 
-The document linked above defines the central concept of vector processing in general to be the process of strip-mining. Strip-Mining is to process an operation between two operands (vector or scalar, at least on of them a vector) in batches until the vector operation is done on all elementes of the vector. If the vector is very large, then it might not fit into the hardware in one large piece and hence smaller batches of the vector that will actually fit into the hardware are processed instead in a loop until the work is done.
+The document linked above defines the central concept of vector processing in general to be the process of strip-mining. Strip-Mining means to process an operation between two operands (vector or scalar, at least on of them a vector) in batches until the vector operation is done on all elementes of the vector. If the vector is very large, then it might not fit into the hardware in one large piece and hence smaller batches of the vector that will actually fit into the hardware are processed instead in a loop until the work is done.
 
 Strip-mining requires a co-design between software (the assembler application) and hardware, the RVV vector engine. The co-design for strip-mining looks like this:
 
@@ -2057,6 +2057,49 @@ Strip-mining requires a co-design between software (the assembler application) a
 1. The vector engine will execute the store command and transfer the elements
 
 1. The application has alread updated it's pointers or if not it will update the pointers, advancing them by the batch size. Now the current iteration of strip mining is done and the next for loop iteration for strip-mining can commence.
+
+Now that the basic idea and principle has been described in natural language, lets look at code that implements the strip-mining hardware-software co-design.
+
+```
+# vector-vector add routine of 32-bit integers
+#
+# void vvaddint32(size_t n, const int*x, const int*y, int*z)
+# {
+#	for (size_t i=0; i<n; i++)
+#   {
+#      z[i] = x[i] + y[i];
+#   }
+# }
+#
+# Mapping parameters to argument register (a0 .. a7)
+# a0 = n, a1 = x, a2 = y, a3 = z
+#
+# Non-vector instructions are indented
+vvaddint32:
+	vsetvli t0, a0, e32, ta, ma 	# Set vector length based on 32-bit vectors. t0 contains the amount of elements that will be processed
+
+	vle32.v v0, (a1) 				# Get first vector
+
+		# can I move these two instructions up over vle32.v ???
+		sub a0, a0, t0 				# Decrement number of elements that still need processing.
+									# t0 is the result of vsetvli. It is the amount of elements processed this iteration
+		slli t0, t0, 2 				# Multiply number done by 4 bytes (= 32 bit integer) because of SEW=e32
+
+		add a1, a1, t0 				# Bump pointer for first vector
+
+	vle32.v v1, (a2) 				# Get second vector
+		add a2, a2, t0 				# Bump pointer for second vector
+
+	vadd.vv v2, v0, v1 			    # Sum vectors
+
+	vse32.v v2, (a3) 				# Store result
+		add a3, a3, t0 				# Bump pointer
+
+		bnez a0, vvaddint32 		# Loop back
+		ret 						# Finished
+```
+
+No further explanation is given other that all the instructions outlined above are visible in code executing exactly the purpose that has been described. A for loop that contains a vsetvli instruction and a load, execute, store pattern each iteration is implemented, exactly as the strip-mining workflow dictates it. I hope that the code does make sense somewhat now that the principle has been explained.
 
 RVV was designed around this concept of strip-mining and to provide a simple workflow for it:
 
