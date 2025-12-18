@@ -2042,21 +2042,21 @@ Strip-mining requires a co-design between software (the assembler application) a
 
 1. Aside from the AVL, the application also specifies the size/datatype of the elements (= Selected Element Width, SEW) in the vector and how it wants the vector engine to group the elements into the vector registers (= group modifier, LMUL).
 
-1. The vector engine takes the request of AVL, SEW and LMUL from the application (which issues a set(i)vli instruction each iteration of the strip-mining loop) and computes the batch size. This is the hardware part of the hardware-software co-design. The vector engine now makes a decision on how many of it's vector registers it needs to combine in order to fit SEW into CPU hardware given the user-requests grouping (LMUL). Also it needs to keep track of home many ALU-nodes it has available for vector processing. Given all hardware constraints, the vector engine will determine the batch size that it can actually commit to. This batch size is (very confusingly) called vector length (vl). The vl is returned in the destination register to the call of the vsetvli instruction and also stored in the vl register.
+1. The vector engine takes the request of AVL, SEW and LMUL from the application (which issues a set(i)vli instruction each iteration of the strip-mining loop) and computes the batch size. This is the hardware part of the hardware-software co-design. The vector engine now makes a decision on how many of it's vector registers it needs to combine in order to fit SEW into CPU hardware given the user-requests grouping (l-multiplier, LMUL). Also it needs to keep track of home many ALU-nodes it has available for vector processing. Given all hardware constraints, the vector engine will determine the batch size that it can actually commit to. This batch size is (very confusingly) called vector length (vl). The vl is returned in the destination register to the call of the vsetvli instruction and also stored in the vl register.
 
 1. The application receives the vl value from the destination register. It now knows what the batch size is. It will execute vector load instructions (vle8, vle16, ...) to load data from a specific address in memory. And it will uptdate the pointers to memory in order to keep track of where to read data for the next batch from. In advances the pointers acording to the batch size returned by the vector engine. The application only specifies the address to load from. It does not specify the amount of elements! The amount of elements was agreed upon by the succesfull setivli instruction. The application has communicated how the data type looks like and the vector engine has commited to a certain vl. This means the amount of elements that are transferred from memory into the CPU registers is implicitly agreed upon!
 
-1. The vector engine will process the load instruction (vle8, vle16, ...) and load it's internal vector registers.
+1. The vector engine will process the load instruction (vle8, vle16, ...) and load it's internal vector registers. To load data from memory it will use the agreed upon vl value implicitly.
 
-1. The application executes a vector/vector or vector/scalar operation (vadd, vsub, ...)
+1. The application executes a vector/vector or vector/scalar operation (vadd, vsub, ...). The application implicitly knows that this operation is only executed on the current batch and not on all vector elements in total.
 
-1. The vector engine performs the operation on all loaded elements in parallel by applying all the ALU-nodes that it has reserved for this step of strip-mining.
+1. The vector engine performs the operation on all loaded elements in parallel by applying all the ALU-nodes that it has reserved for this step of strip-mining meaning, the current batch of elements.
 
 1. The application executes a store call to transfer the result data out of the CPU registers back into memory.
 
 1. The vector engine will execute the store command and transfer the elements
 
-1. The application has alread updated it's pointers or if not it will update the pointers, advancing them by the batch size. Now the current iteration of strip mining is done and the next for loop iteration for strip-mining can commence.
+1. The application has alread updated it's pointers or if not it will update the pointers at this point in the loop, advancing them by the batch size (vl). Now the current iteration of strip mining is done and the next for loop iteration for strip-mining can commence.
 
 Now that the basic idea and principle has been described in natural language, lets look at code that implements the strip-mining hardware-software co-design.
 
@@ -2078,28 +2078,31 @@ Now that the basic idea and principle has been described in natural language, le
 vvaddint32:
 	vsetvli t0, a0, e32, ta, ma 	# Set vector length based on 32-bit vectors. t0 contains the amount of elements that will be processed
 
-	vle32.v v0, (a1) 				# Get first vector
+	vle32.v v0, (a1) 				# Load for first vector
 
 		# can I move these two instructions up over vle32.v ???
 		sub a0, a0, t0 				# Decrement number of elements that still need processing.
 									# t0 is the result of vsetvli. It is the amount of elements processed this iteration
 		slli t0, t0, 2 				# Multiply number done by 4 bytes (= 32 bit integer) because of SEW=e32
 
-		add a1, a1, t0 				# Bump pointer for first vector
+		add a1, a1, t0 				# Increment/Advance pointer for first vector
 
-	vle32.v v1, (a2) 				# Get second vector
-		add a2, a2, t0 				# Bump pointer for second vector
+	vle32.v v1, (a2) 				# Load for second vector
+		add a2, a2, t0 				# Increment/Advance pointer for second vector
 
 	vadd.vv v2, v0, v1 			    # Sum vectors
 
-	vse32.v v2, (a3) 				# Store result
-		add a3, a3, t0 				# Bump pointer
+	vse32.v v2, (a3) 				# Store result back to memory
+		add a3, a3, t0 				# Increment/Advance pointer for destination
 
-		bnez a0, vvaddint32 		# Loop back
-		ret 						# Finished
+		bnez a0, vvaddint32 		# Loop back to the beginning of the for loop
+                                    # if the element count is not zero. Otherwise
+                                    # continue with the ret instruction
+
+		ret 						# Finished with the function
 ```
 
-No further explanation is given other that all the instructions outlined above are visible in code executing exactly the purpose that has been described. A for loop that contains a vsetvli instruction and a load, execute, store pattern each iteration is implemented, exactly as the strip-mining workflow dictates it. I hope that the code does make sense somewhat now that the principle has been explained.
+All the instructions outlined above are visible in code executing exactly the purpose that has been described. A for loop that contains a vsetvli instruction as well as a load, execute, store pattern in each iteration of the loop is implemented, exactly as the strip-mining workflow dictates it. I hope that the code does make sense somewhat now that the principle has been explained.
 
 RVV was designed around this concept of strip-mining and to provide a simple workflow for it:
 
