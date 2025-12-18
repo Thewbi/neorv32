@@ -1970,6 +1970,7 @@ The entire design is pretty elaborate. It might be the largest entitiy I have se
 
 # Extending NEORV32 by the Vector (V) Extension
 
+https://github.com/riscvarchive/riscv-v-spec/blob/master/v-spec.adoc#vector-length-register-vl
 https://rvv-isadoc.readthedocs.io/en/latest/
 
 The [R]ISC-[V] [V]ector (RVV) Extension, also known as V extension adds extra hardware to speed up vector operations. Vector operations are SIMD, where a single machine instruction can cause parallel operations on several data items at once.
@@ -2025,13 +2026,55 @@ This means that at runtime, reading from the CSR vlenb, the application can retr
 
 ## Configuring the Vector-Engine
 
-Using the V-Extension means using the vector engine. The vector engine is implementation dependant in the amount of parallel ALU-nodes that it has.
+https://github.com/riscvarchive/riscv-v-spec/blob/master/v-spec.adoc#6-configuration-setting-instructions-vsetvlivsetivlivsetvl
+
+The document linked above defines the central concept of vector processing in general to be the process of strip-mining. Strip-Mining is to process an operation between two operands (vector or scalar, at least on of them a vector) in batches until the vector operation is done on all elementes of the vector. If the vector is very large, then it might not fit into the hardware in one large piece and hence smaller batches of the vector that will actually fit into the hardware are processed instead in a loop until the work is done.
+
+Strip-mining requires a co-design between software (the assembler application) and hardware, the RVV vector engine. The co-design for strip-mining looks like this:
+
+1. The first iteration of strip mining begins. This effectively means that the application starts the for loop that it has to implement for strip mining.
+
+1. The application may check if it is cheaper to compute the operation with or without the vector engine. Imagine that only one or two elements of the large vector are left at this point, then it might be cheaper to just use the ALU once or twice instead of loading the vector engine.
+
+1. If the application decides to use the Vector Engine instead of the ALU, then it continues the strip-mining loop. Otherwise it will jump to an end-label. (Optimizing compilers will structure for-loops in a different manner but the concept of terminating a loop is applied in all cases at this point)
+
+1. The application specifies the remaining amount of elements in the vector/vectors that need processing. This value is called Application Vector Length (AVL). In the first iteration of strip-mining, AVL is the total length of the vector. As strip-mining processes batches, the AVL will get smaller and smaller by the batch-size each iteration until the vector is processed and the strip-mining loop terminates.
+
+1. Aside from the AVL, the application also specifies the size/datatype of the elements (= Selected Element Width, SEW) in the vector and how it wants the vector engine to group the elements into the vector registers (= group modifier, LMUL).
+
+1. The vector engine takes the request of AVL, SEW and LMUL from the application (which issues a set(i)vli instruction each iteration of the strip-mining loop) and computes the batch size. This is the hardware part of the hardware-software co-design. The vector engine now makes a decision on how many of it's vector registers it needs to combine in order to fit SEW into CPU hardware given the user-requests grouping (LMUL). Also it needs to keep track of home many ALU-nodes it has available for vector processing. Given all hardware constraints, the vector engine will determine the batch size that it can actually commit to. This batch size is (very confusingly) called vector length (vl). The vl is returned in the destination register to the call of the vsetvli instruction and also stored in the vl register.
+
+1. The application receives the vl value from the destination register. It now knows what the batch size is. It will execute vector load instructions (vle8, vle16, ...) to load data from a specific address in memory. And it will uptdate the pointers to memory in order to keep track of where to read data for the next batch from. In advances the pointers acording to the batch size returned by the vector engine. The application only specifies the address to load from. It does not specify the amount of elements! The amount of elements was agreed upon by the succesfull setivli instruction. The application has communicated how the data type looks like and the vector engine has commited to a certain vl. This means the amount of elements that are transferred from memory into the CPU registers is implicitly agreed upon!
+
+1. The vector engine will process the load instruction (vle8, vle16, ...) and load it's internal vector registers.
+
+1. The application executes a vector/vector or vector/scalar operation (vadd, vsub, ...)
+
+1. The vector engine performs the operation on all loaded elements in parallel by applying all the ALU-nodes that it has reserved for this step of strip-mining.
+
+1. The application executes a store call to transfer the result data out of the CPU registers back into memory.
+
+1. The vector engine will execute the store command and transfer the elements
+
+1. The application has alread updated it's pointers or if not it will update the pointers, advancing them by the batch size. Now the current iteration of strip mining is done and the next for loop iteration for strip-mining can commence.
+
+RVV was designed around this concept of strip-mining and to provide a simple workflow for it:
+
+> The application specifies the total number of elements to be processed (the application vector length or AVL) as a candidate value for vl, and the hardware responds via a general-purpose register with the (frequently smaller) number of elements that the hardware will handle per iteration (stored in vl), based on the microarchitectural implementation and the vtype setting.
+
+> A straightforward loop structure, shown in Example of stripmining and changes to SEW, depicts the ease with which the code keeps track of the remaining number of elements and the amount per iteration handled by hardware.
+
+Using the V-Extension means using the vector engine. The vector engine is implementation dependant in the amount of parallel ALU-nodes that it has. At synthesis time, the designer configures an amount of ALU nodes that will get generated for the vector engine. This amount of ALU nodes is then fixed and becomes implementation dependant.
 
 As an example, if the implementation provides 4 ALU-nodes, then the vector engine can add 4 elements at a time. If it has 1024 ALU-nodes it can add 1024 elements at a time.
 
-The V-extension defines a two step process. First, the user poses a request which may or may not be satisfied by the vector engine. A kind of handshake or communication pattern between the user and the vector engine starts. The user uses the vsetvli instruction to specify the vtype that they want to use. The vtype says how large a vector element is and how many of those elements they want to compute in parallel in one go.
+To set numbers into relation, let's look at NVIDIA's line of GPU chips. According to https://modal.com/gpu-glossary/device-hardware/cuda-core NVIDIA specific CUDA cores are defined as such: "The CUDA Cores are GPU cores that execute scalar arithmetic instructions. [..] They are to be contrasted with the Tensor Cores, which execute matrix operations.". In their RTX 5090 graphics cards (price over 2500 Euro at the time of this writing) NVIDIA uses the Blackwell Architecture and specifically the GB202 chip which is specified to have 24576 CUDA cores scheduled by the warp scheduler. https://images.nvidia.com/aem-dam/Solutions/geforce/blackwell/nvidia-rtx-blackwell-gpu-architecture.pdf.
 
-The vector engine then checks if it can satisfy the request and returns a value that it really can satify. For example if it only has four ALI-nodes than it will return a vl of 4.
+I am not 100% certain on how to compare NVIDIA's warp scheduler and the CUDA core architecture to the Vector Extensions vl value of the RISC-V initiative. On a completely naive thought-process, just looking at the numbers for 5 minutes, it seems as if amounts of 10000s of ALU nodes in the vector engine should be a reasonable lower-end target value for production grade RISC-V AI accelerator chips. To determine real comparisons, further in depth-knowledge in chip design is required of course. Our examples of 4 or 16 ALU nodes are of educational interest at best.
+
+The V-extension defines a two step process. First, the user poses a request which may or may not be satisfied by the vector engine. A kind of handshake or communication pattern between the user and the vector engine starts. The user uses the vsetvli instruction (or one of it's variants) to specify the vtype that they want to use. The vtype says how large a vector element is and how many of those elements they want to compute in parallel in one go.
+
+The vector engine then checks if it can satisfy the request and returns a value that it really can satisfy. For example if it only has four ALU-nodes than it will return a vl of 4.
 
 Then in a second step, the application needs to react to the vl returned by the vector engine. The application now needs to start a strip-mining loop. Strip-mining is the process of peace-wise feeding parts of the vector to the vector engine until the entire vector is processed. For example if the application wants to add two vectors with 128 elements and the vector extension returns a vl of 16, then the application has to strip-mine the vectors in 128 / 16 = 8 iterations until all elements have been added. Each iteration uses all 16 ALU nodes in parallel. This brings down the vector addition from 128 iterations to 8.
 
@@ -2069,13 +2112,15 @@ They formulate their request as such:
 
 This means: Dear vector engine, please configure yourself to process 16 8bit elements (e8) using a group size of 1 (m1).
 
-The second parameter to vsetvli contains the value 16 which is the so called AVL ::= Application Vector Length. It is a user request which maybe the vector engine cannot fulfill. To check what the vector engine really will commit to, the return value to the vestvli instruction is the vl-value. The vl value is the value that the vector engine returns into the register specified as first parameter. Also the vl value is written into the vl register!
+The second parameter to vsetvli contains the value 16 which is the so called AVL ::= Application Vector Length. It is a user request which maybe the vector engine cannot fulfill. To check what the vector engine really will commit to, the return value to the vestvli instruction is the vl-value. The vl value is the value that the vector engine returns into the register specified as first parameter to the vsetvli instruction. Also the vl value is written into the vl register!
 
 The e8 argument is a value for the SEW ::= Selected Element Width. This is where the user specifies the size in bits of a single vector element to perform computation on. In this case the vector should be a vector of eight bit uint8_t elements.
 
 The m1 argument is the LMUL argument ::= which is the amount of vector registers to combine also known as the group. In this case the user wants the vector engine to combine only a single vector register (We assume VLEN=128 = 128 bit per vector register.)
 
 Now the vsetvli instruction is processed and the vector engine will return vl into the first register and into the vl register.
+
+TODO: what happens if the requested amount of elements will not fit into the group size? Example: 128 bit per vector register (VLEN = 128). User wants 32 8bit elements computed with a LMUL (group size) Of 1? The data does not fit into the group!
 
 Next we need to look at page 23 to understand what the decision of the execution engine will be based on.
 
@@ -2200,7 +2245,7 @@ This is the case. The values 0x3f44383b and following are unchanged. The rows ab
 
 ## Strip-Mining example
 
-Here is an exmaple that a gcc compiler has generated from the vvadddin32() function.
+Here is an example that a gcc compiler has generated from the vvadddin32() function.
 The vvadddin32() has a size_t parameter that will store the length of the two vectors.
 The length is therefore a dynamic parameter and very large vectors can be added using the
 vvadddin32() function.
