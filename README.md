@@ -31,6 +31,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Compiling](#compiling)
     - [Analysing the Assembly Listing](#analysing-the-assembly-listing)
     - [Initializing the C-runtime](#initializing-the-c-runtime)
+    - [Dealing with global variable](#dealing-with-global-variable)
     - [Symmetric Multi Processing, Hart 0 Check](#symmetric-multi-processing-hart-0-check)
     - [Summary](#summary)
     - [Write a simple main function](#write-a-simple-main-function)
@@ -52,6 +53,9 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
         - [The example](#the-example)
 - [The FPU Zfinx](#the-fpu-zfinx)
     - [Triggering the FPU](#triggering-the-fpu)
+- [Loading data from Memory into Registers](#loading-data-from-memory-into-registers)
+    - [Execution Engine States for Memory Access](#execution-engine-states-for-memory-access)
+    - [Load Store Unit LSU](#load-store-unit-lsu)
 - [Extending NEORV32 by the Vector V Extension](#extending-neorv32-by-the-vector-v-extension)
     - [V Extension Hardware Additions](#v-extension-hardware-additions)
     - [New Registers](#new-registers)
@@ -60,6 +64,9 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Performing a vector operation](#performing-a-vector-operation)
     - [Performing a save operation](#performing-a-save-operation)
     - [Strip-Mining example](#strip-mining-example)
+- [Extending NEORV32 with a Matrix Extension](#extending-neorv32-with-a-matrix-extension)
+    - [Opcodes](#opcodes)
+    - [Matrix Dimensions](#matrix-dimensions)
 
 <!-- /TOC -->
 
@@ -760,6 +767,150 @@ The rest of the registers are set to 0. Interestingly, the compiler does even re
 the embedded variant of RISC-V since it will stop initializing registers after x15
 if the symbol __riscv_32e is defined, because the embedded variants of RISC-V only
 contain the first 16 registers as opposed to all 32 registers!
+
+## Dealing with global variable
+
+Disclaimer: I am not 100% certain how it really works but I have come up with this theory which I will believe in until prooven wrong.
+
+The question is, how does static data get transferred into the DMEM of the synthesized design? As you now source code is transferred to IMEM (instruction memory) and data has to be transferred to DMEM (Data Memory) before an executable starts. How does this happen for data?
+
+By data, global variables with pre-initialized values are meant. Here is an example main.c file
+
+```
+#include <neorv32.h>
+
+int matrix_a[16]
+  = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+
+int main() {
+
+    int test = matrix_a[0];
+    test = test + 3;
+    matrix_a[0] = test;
+
+    return 0;
+}
+```
+
+How does the data end up in DMEM?
+
+First of all, remember when using gcc you are dealing with an optimizing compiler. Should you declare matrix_a but never use it, chances are high that the variable is removed by the optimization. You need to access the variable at least once in the rest of the application.
+
+The compiler places global variables into DMEM to safe memory space in IMEM. To describe DMEM, the gcc compiler/assembler uses a concept of sections. The section for DMEM data is called .data when the data is initialized (which is the case in the example above). As a sidenot uninitialized data is placed into a section called .bss.
+
+A section is a part of the address space. A section has an address from where it starts and a size. When talking about the address space. Imagine that we have access to a linear address space for an address with of 32 bit which means 4GB or memory are addressable. Obviuosly the NEORV32 chip does not have 4GB after synthesis. So the linear address space is a virtual construct. It needs to be mapped to real hardware with real memory constraints later.
+
+To define the linear address space a linker-script is used (sw\common\neorv32.ld).
+
+Inside the linker script, the memory is split into segments first. (Segment != section)
+
+```
+/* ************************************************************************************************* */
+/* Main memory segments that are relevant for the executable.                                        */
+/* ************************************************************************************************* */
+MEMORY
+{
+  rom  (rx) : ORIGIN = __neorv32_rom_base, LENGTH = __neorv32_rom_size
+  ram (rwx) : ORIGIN = __neorv32_ram_base, LENGTH = __neorv32_ram_size
+}
+```
+
+Then the sections are added into the segments:
+
+Here is the start and the end of the linker script for the .text section which contains the instructions and will later go into the IMEM memory.
+
+```
+/* ************************************************************************************************* */
+/* Section ".text" - program code                                                                    */
+/* ************************************************************************************************* */
+SECTIONS
+{
+  .text : ALIGN(4)
+  {
+    PROVIDE(__text_start = .);
+
+    /* keep start-up code crt0 right at the beginning of rom */
+    KEEP(*(.text.crt0));
+
+    ...
+
+  } > rom
+```
+
+The important part is at the very end, where the section .text is inserted into the rom segment.
+
+Next, the .data section for pre-initialized variables is mapped into the RAM segment (and also ROM somehow) for DMEM so that the application can work with the global variable:
+
+```
+/* ************************************************************************************************* */
+/* Section ".data" - pre-initialized variables                                                       */
+/* crt0 will initialize this RAM section from the executable's ".data" section during boot-up        */
+/* ************************************************************************************************* */
+  .data : ALIGN(4)
+  {
+    PROVIDE(__data_start = .);
+    __global_pointer = . + 0x800;
+
+    *(.data .data.* .data* .gnu.linkonce.d.*)
+    *(.srodata .srodata.*)
+    *(.sdata .sdata.* .gnu.linkonce.s.*)
+    *(.tdata .tdata.* .gnu.linkonce.td.*)
+
+    /* finish section on WORD boundary */
+    . = ALIGN(4);
+    PROVIDE(__data_end = .);
+  } > ram AT > rom
+```
+
+Next we need to understand that there is a mechanism in place to perform some space savings. First let's motivate space saving.
+
+Looking at the definition of the ram segment
+
+```
+ram (rwx) : ORIGIN = __neorv32_ram_base, LENGTH = __neorv32_ram_size
+```
+
+ram has it's origin (start address) at __neorv32_ram_base.
+
+__neorv32_ram_base is defined in the linker script also:
+
+```
+__neorv32_ram_base = DEFINED(__neorv32_ram_base) ? __neorv32_ram_base : 0x80000000;
+```
+
+Check out the value: 0x80000000. This address is at about 2GB of space.
+
+Would the compiler and assembler output a hex file that inserts zeroes up to the 2GB mark and then insert your pre-initialized array matrix_a with 16 int values at that address, you ended up with a .hex or .elf file that is 2 GB in size for a laughable example application.
+
+So we need space savings.
+
+The mechanism is as follows. The hex file contains the pre initialized data packed toghether with the instructions. After loading the .hex data into memory on the CPU, the C-Runtime is executed before main. The C-runtime will then copy the packed data to the address of the .data section:
+
+```
+// ************************************************************************************************
+// Copy .data section from ROM to RAM.
+// ************************************************************************************************
+  beq   x7, x8, __crt0_data_copy_end // __crt0_copy_data_src_begin = __crt0_copy_data_dst_begin
+
+__crt0_data_copy:
+  bge   x8, x9,  __crt0_data_copy_end
+  lw    x15, 0(x7)
+  sw    x15, 0(x8)
+  addi  x7, x7, 4          // word-wise operations; section begins and ends on word boundary
+  addi  x8, x8, 4
+  j     __crt0_data_copy
+
+__crt0_data_copy_end:
+```
+
+This is a simple loop that retrieves bytes from one address and writes the bytes to another address.
+
+The target address will be 0x80000000 which is the linear address for the .data section.
+
+I am guessing that the DMEM synthesize memory is memory mapped to address 0x80000000 by the VHDL code somehow. This means although the NEORV32 CPU does not have 4GB of RAM, the address 0x80000000 can still be used as it is mapped to the available portion of DMEM that is actually available.
+
+We see again that all this is a intricate web of software and hardware working in unison to make an application execute on hardware after it has been cross-compiled by software before-hand. All parts have to fit together to make this happen. I think this is what people refer to as systems programming as a systems programmer has to at least have tools available that perform these tasks. Better yet he knows what the tools do under the hood and how to change the system should it fail.
+
 
 ##  10. <a name='SymmetricMultiProcessingHart0Check'></a>Symmetric Multi Processing, Hart 0 Check
 
@@ -1968,6 +2119,126 @@ The co-processor design also instantiates entities in order to perform all compu
 
 The entire design is pretty elaborate. It might be the largest entitiy I have seen so far ...
 
+
+
+
+
+
+
+# Loading data from Memory into Registers
+
+## Execution Engine States for Memory Access
+
+The execution entity in rtl\core\neorv32_cpu_control.vhd identifies instructions that access memory in the EX_EXECUTE state and then changes to the EX_MEM_REQ state.
+
+```
+-- memory access --
+when opcode_load_c | opcode_store_c | opcode_amo_c =>
+    exe_engine_nxt.state <= EX_MEM_REQ;
+```
+
+In the EX_MEM_REQ state, lsu_req is set to 1 and the EM_MEM_RSP state is entered.
+
+The lsu_req bus signal is used to enable or disable the Load/Store Unit (LSU). The LSU is contained in rtl\core\neorv32_cpu_lsu.vhd.
+
+```
+when EX_MEM_REQ => -- trigger memory request
+-- ------------------------------------------------------------
+if (or_reduce_f(trap_ctrl.exc_buf(exc_ialign_c downto exc_iaccess_c)) = '0') then -- memory request if no instruction exception
+    ctrl_nxt.lsu_req     <= '1';
+    exe_engine_nxt.state <= EX_MEM_RSP;
+else
+    exe_engine_nxt.state <= EX_DISPATCH;
+end if;
+```
+
+In the EX_MEM_RSP state, the execution engine waits for the lsu_wait_i signal to go low.
+
+If the signal goes low, the LSU is done and the system goes back to the EX_DISPATCH state to wait for the next instruction. Otherwise the execution engine remains in EX_MEM_RSP and checks for exceptions. An exception is triggered if the LSU operation took too long and has timed out.
+
+```
+when EX_MEM_RSP => -- wait for memory response
+    -- ------------------------------------------------------------
+    if (lsu_wait_i = '0') or -- bus system has completed the transaction (if there was any)
+        (or_reduce_f(trap_ctrl.exc_buf(exc_laccess_c downto exc_salign_c)) = '1') then -- load/store exception
+        ctrl_nxt.rf_wb_en    <= (not ctrl.lsu_rw) or ctrl.lsu_rvs or ctrl.lsu_rmw; -- write-back to RF if read operation (won't happen in case of exception)
+        exe_engine_nxt.state <= EX_DISPATCH;
+    end if;
+```
+
+## Load Store Unit (LSU)
+
+The Load Store Unit is the component that talks to the memory. It is controlled by the execution engine when a instruction for memory access is executed.
+
+https://msyksphinz-self.github.io/riscv-isadoc/html/rvi.html#lb
+
+A load byte instruction adds an offset (encoded as an immediate) to the content of the source register rs1 and loads a byte from the resulting address into the destination register rd.
+
+```
+lb rd, offset(rs1)
+```
+
+```
+Implementation: x[rd] = sext(M[x[rs1] + sext(offset)][7:0])))
+```
+
+The encoding looks like this: https://luplab.gitlab.io/rvcodecjs/#q=lb&abi=false&isa=AUTO
+
+The funct3 value is 000. This is the pattern form a ALU add operation according to the constant funct3_sadd_c from rtl\core\neorv32_package.vhd. This means for the lb instruction, the ALU will perform an addition. The addition will add the register rs1 to the immediate which contains the offset in order to build the address to load from.
+
+The immediate is decoded ???
+
+When a load byte/half-word/word instruction is executed for example, the address to read from memory is decoded from the instruction where ???
+
+The Load-Store-Unit has the purpose to produce a bus request which will cause the memory to load the requested data an place it onto the bus. The Load-Store-Unit writes the address into the bus-request:
+
+```
+-- address output --
+dbus_req_o.addr <= mar; -- bus address
+```
+
+The mar (Memory Access Register) is assigned an address inside the mem_addr_reg process of the LSU:
+
+```
+mar <= addr_i; -- memory address register
+```
+
+Here addr_i is an input port. addr_i gets it's value from alu_add! This makes sense since the ALU has to add the immediate offset to the content of the source register 1 in order to compute the address to load from memory.
+
+See rtl\core\neorv32_cpu.vhd
+```
+-- Load/Store Unit (LSU) ------------------------------------------------------------------
+  -- -------------------------------------------------------------------------------------------
+  neorv32_cpu_lsu_inst: entity neorv32.neorv32_cpu_lsu
+  port map (
+    -- global control --
+    clk_i       => clk_i,     -- global clock, rising edge
+    rstn_i      => rstn_i,    -- global reset, low-active, async
+    ctrl_i      => ctrl,      -- main control bus
+    -- cpu data access interface --
+    addr_i      => alu_add,   -- access address
+    wdata_i     => rs2,       -- write data
+    rdata_o     => lsu_rdata, -- read data
+    mar_o       => lsu_mar,   -- memory address register
+    wait_o      => lsu_wait,  -- wait for access to complete
+    err_o       => lsu_err,   -- alignment/access errors
+    pmp_fault_i => pmp_fault, -- PMP read/write access fault
+    -- data bus --
+    dbus_req_o  => dbus_req,  -- request
+    dbus_rsp_i  => dbus_rsp_i -- response
+  );
+```
+
+
+
+ben = byte-wise enable - see rtl\core\neorv32_dmem.vhd line 66.
+mar = memory address register
+
+
+
+
+
+
 # Extending NEORV32 by the Vector (V) Extension
 
 https://github.com/riscvarchive/riscv-v-spec/blob/master/v-spec.adoc#vector-length-register-vl
@@ -2156,7 +2427,7 @@ They formulate their request as such:
     vsetvli         t0, t0, e8,m1,tu,mu
 ```
 
-This means: Dear vector engine, please configure yourself to process 16 8bit elements (e8) using a group size of 1 (m1).
+This means: Dear vector engine, please configure yourself to process 16 8-bit elements (e8) using a group size of 1 (m1).
 
 The second parameter to vsetvli contains the value 16 which is the so called AVL ::= Application Vector Length. It is a user request which maybe the vector engine cannot fulfill. To check what the vector engine really will commit to, the return value to the vestvli instruction is the vl-value. The vl value is the value that the vector engine returns into the register specified as first parameter to the vsetvli instruction. Also the vl value is written into the vl register!
 
@@ -2337,4 +2608,73 @@ vvaddint32:
 
 		bnez a0, vvaddint32 		# Loop back
 		ret 						# Finished
+```
+
+
+
+
+
+# Extending NEORV32 with a Matrix Extension
+
+The matrix extension will use the same strip-mining centric approach as the vector extension. Large matrices may not fit into the CPU and will therefore be incrementally computed. A tiling approach makes it possible to multiply two large matrices that are so large that only sub-matrices, callled tiles, fit into memory.
+
+The first order of business is to define instructions that will load matrices into the matrix engine. Because an instruction has a size of 32bit, not all information can be encoded into a single load instruction. Similar to the vector extension's setivli instructions, a configuration dialog between the user and the matrix engine is performed in every iteration of strip-mining. The matrix engine is configured and keeps it's configuration alive in internal state. It will act according to i's configuration once it is to execute a matrix instruction.
+
+To load data from memory into the matrix-units, a tile of the large matrix should be transferred into the matrix unit. Since a tile is a two dimensional object as opposed to a vector, the concept of a stride needs to be introduced.
+
+In the following, it is assumed, that a matrix is stored row-major, meaning the two-dimensional matrix is flattened out by placing rows next to each other and storing them in memory in one large run. Two matrix cells that are horizontal neighbours can be accessed as to neighbouring memory cells.
+
+Accessing two vertically adjacent cells are accessed by adding a stride. The stride is the same as the width of the matrix. Imagine a 16x16 matrix. Accessing the tile that spans the four cells in the top-left corner means accessing indices 0, 1, then adding a stride of 16 and accessing elements 16, 17.
+
+It can easily be seen that the stride might be part of the state of the matrix engine, so that loading a sub-tile automatically applies the stride that matches the source matrix dimensions or width. That way, the stride does not have to be encoded into the load-instruction.
+
+https://faculty.kfupm.edu.sa/COE/aimane/coe301/tools_manuals/row-major.asm
+https://courses.cs.washington.edu/courses/cse351/cachesim/
+
+## Opcodes
+
+The opcode 1110111 is used for the matrix extension. This opcode is also used in https://lists.riscv.org/g/sig-vector/attachment/10/0/RISC-V%20Matrix%20Extension%20Introduction.pdf
+
+The mset[i]ml[i] instructions use a funct7 and are of R-Type.
+
+|     mnemonic | opcode (7 bit) | funct3 (3 bit) | funct7 (7 bit) | remark |
+| ------------ | -------------- | -------------- | -------------- | ------ |
+|     msetimli |      0b1110111 |          0b000 |      0b0000000 | lowest two bits of opcode are 11 because this is not a compressed instruction |
+
+mle32 and mse32 use an immediate to describe an offset and are of I-Type. They work like lw and sw.
+
+mle32 rmd, immediate(rs1). 32 matrix units can be encoded in the 5bits of rmd[4:0] which is the matrix destination register. rmd identifies the matrix unit that is loaded with data.
+
+|     mnemonic | immediate[11:0] | rs1[4:0] | funct3 [2:0] | rmd[4:0] | opcode (7 bit) | remark |
+| ------------ | --------------- | -------- | ------------ | -------- | -------------- | ------ |
+|        mle32 |                 |          |        0b001 |          |      0b1110111 | funct3 = 0b010 encodes a load word  |
+|        mse32 |                 |          |        0b010 |          |      0b1110111 | funct3 = 0b010 encodes a store word |
+
+The first experiment will be to load a tile from memory into a matrix-engine unit. In order to achieve this, a mle32 instruction is defined. mle32 stands for matrix load element-size 32. This means this instruction will load a sub-tile that consists of uint32_t, word sized data from memory into the matrix-engine unit.
+
+The dimension and stride of the tile are configured using a mset[i]ml[i] family of instructions. The mset[i]ml[i] will set the internal state of the matrix engine for each iteration of strip mining.
+
+In the first development step, mset[i]ml[i] is not implemented and hard-code defaults are used. The defaults will be:
+
+matrix-engine unit is 2x2 elements. A input matrix of 4x4 is expected, this means the stride is 4 because this is the source matrix width. A mle32 command will load 4 uint32_t values from memory because the matrix-engine unit has 4 elements. The elements will be loaded form a memory address stored in a register, the register is then specified as a parameter to mle32. A destination matrix-engine unit m0 - m31 is specified as a destination parameter to the mle32 call. m0 to m31 denote one of the 32 available matrix-engine units (similar to the 32 vector registers v0-v31 of the vector-extension).
+
+The mle32 command will use a new set of states in the NEORV32 execution engine. These state will form a loop. The loop will iterate 4 times for the four cells in the matrix engine unit. Each iteration of the loop will perform a load from the respective memory cell that stores the source matrix-element. As the loop iterates it will apply the correct stride in order to load the correct vertically neighboured cells.
+
+## Matrix Dimensions
+
+As a convention, the matrix engine will have power-of-two sized units to multiply tiles with each other. If the source matrices are not power of two, the missing elements are filled (padded) with zeroes until a power-of-two is achieved.
+
+A quick example shows that mutliplying (non-power-of-two) 3x3 matrices yields the same result as the square, power-of-two 4x4 counterparts that are created by padding zeroes to the 3x3 matrixes. The advantage of the 4x4 dimension is that it is divisible by a square, power-of-two matrix-unit without remainder (either 2x2 units or a single 4x4 unit will match).
+
+```
+1 2 3   1 2 3    30  36  42
+4 5 6 x 4 5 6 =  66  81  96
+7 8 9   7 8 9   102 126 150
+```
+
+```
+1 2 3 0   1 2 3 0    30  36  42 0
+4 5 6 0 x 4 5 6 0 =  66  81  96 0
+7 8 9 0   7 8 9 0   102 126 150 0
+0 0 0 0   0 0 0 0     0   0   0 0
 ```
