@@ -18,6 +18,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
 - [Links](#links)
 - [Tips](#tips)
 - [Simulation](#simulation)
+    - [Inspecting the traces .vcd file format](#inspecting-the-traces-vcd-file-format)
 - [Execution Engine](#execution-engine)
 - [Finding executed instructions](#finding-executed-instructions)
 - [Tipps for Debugging using .vcd trace files](#tipps-for-debugging-using-vcd-trace-files)
@@ -75,6 +76,15 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Adding matrix registers](#adding-matrix-registers)
         - [Analysing the X Register File for RV32 instructions](#analysing-the-x-register-file-for-rv32-instructions)
 - [Cache Bus Host](#cache-bus-host)
+    - [The Cache'S StateMachine](#the-caches-statemachine)
+        - [S_CHECK](#s_check)
+        - [S_IDLE](#s_idle)
+        - [S_DIRECT_RSP](#s_direct_rsp)
+        - [S_DOWNLOAD_START](#s_download_start)
+        - [S_DOWNLOAD_WAIT](#s_download_wait)
+        - [S_DOWNLOAD_RUN](#s_download_run)
+        - [S_CLEAR](#s_clear)
+    - [Bus Hosts](#bus-hosts)
 - [Burst Transfers for Bus Hosts](#burst-transfers-for-bus-hosts)
 - [DMA](#dma)
 
@@ -123,9 +133,13 @@ The shell script will compile (analyse, evaluate with GHDL) the processor and st
 
 The CPU is simulated for the real-time period specified via the --stop-time parameter. The simulation takes much longer in real world time than the specified time period to simulate the design for. It is probably smart to first try with a simulation duration of 20us instead of 20ms. 20ns is not enough to get the CPU to process relevant data.
 
+## Inspecting the traces (.vcd file format)
+
 The signal traces go into the waveform file sim\neorv32.vcd which you can open and analyze in GTKWave, Surfer or other waveform viewers.
 
 I recommend using surfer since it is free (and open source, no license files from huge corporations required), easy to download and compile (you need to install Rust however), easy to use with a intuitive interface and it has very high performance when it comes to starting up and also displaying the traces using graphics.
+
+Sadly, you need to compile surfer yourself (very easy) since the surfer-build-server provides no precompiled binary releases.
 
 To build surfer (https://surfer-project.org/), install rust, clone the surfer repository, enter the surfer subfolder and build it using *cargo build*.
 
@@ -2883,7 +2897,7 @@ TODO: create a bus request that contains the address of the first element, the s
 
 # Cache (Bus Host)
 
-The memory hierarchy might in extrem cases go from (ancient) tape drives up to registers inside the CPU silocone. The close to the CPU data is stored, the faster processing will be, also the higher the prices and less amount of memory will be available. Matrix manipulation requires the data be transferred from DMEM into the CPU hardware. A cache is inserted into the memory hierachy between CPU and DMEM to speed up processing based on the fact that cache locality is anticipated as applications tend to have a certain amount of locality instead of randomly jumping around in memory. As a feedback effect, software can be designed and structured with cache locality in mind so that thee speed up through cache locality will come into effect.
+The memory hierarchy might in extrem cases go from (ancient) tape drives up to registers inside the CPU silocone. The closer to the CPU data is stored, the faster processing will be, also the higher the prices and less amount of memory will be available. Matrix manipulation requires the data be transferred from DMEM into the CPU hardware. A cache is inserted into the memory hierachy between CPU and DMEM to speed up processing based on the fact that cache locality is anticipated as applications tend to have a certain amount of locality instead of randomly jumping around in memory. As a feedback effect, software can be designed and structured with cache locality in mind so that the speed up through cache locality will come into effect.
 
 When the cache loads large chunks of DMEM or IMEM using burst transfer and the CPU accesses the cache instead of IMEM and DMEM directly, then a speed-up will occur. A cache-miss however causes a burst-transfer and causes overhead. If the system strikes a net-positive balance between cache-hit and cache-miss, caching will provide a speed-up.
 
@@ -2899,6 +2913,211 @@ IMEM and DMEM are also implemented to be burst capable
 
 The cache is contained in rtl\core\neorv32_cache.vhd. The file contains two entities: neorv32_cache and neorv32_cache_memory. neorv32_cache_memory is instantiated inside the neorv32_cache architecture.
 
+The function *function index_size_f(input : natural) return natural* is described as:
+
+> Minimal required number of bits to represent <input> numbers
+
+## The Cache'S StateMachine
+
+In principle, the cache internally uses a state machine. The state machine updates signals of type ctrl_t. It has a current ctrl_t signal (called ctrl) and a ctrl_t signal that store the values for the next iteration (called ctrl_nxt).
+
+```
+-- control arbiter --
+  type state_t is (
+    S_IDLE, S_CHECK, S_DIRECT_RSP, S_CLEAR, S_DOWNLOAD_START, S_DOWNLOAD_WAIT, S_DOWNLOAD_RUN, S_DONE
+  );
+  type ctrl_t is record
+    state    : state_t; -- state machine
+    buf_req  : std_ulogic; -- access request buffer
+    buf_sync : std_ulogic; -- synchronization request buffer
+    buf_dir  : std_ulogic; -- direct/uncached access buffer
+    tag      : std_ulogic_vector(tag_size_c-1 downto 0); -- tag
+    idx      : std_ulogic_vector(index_size_c-1 downto 0); -- index
+    ofs_int  : std_ulogic_vector(offset_size_c-1 downto 0); -- cache address offset
+    ofs_ext  : std_ulogic_vector(offset_size_c downto 0); -- bus address offset
+  end record;
+  signal ctrl, ctrl_nxt : ctrl_t;
+```
+
+Outside of the state machine process, ctrl_nxt is copied into ctrl.
+
+```
+-- Control Engine FSM Sync ----------------------------------------------------------------
+-- -------------------------------------------------------------------------------------------
+ctrl_engine_sync: process(rstn_i, clk_i)
+begin
+  if (rstn_i = '0') then
+    ctrl.state    <= S_IDLE;
+    ctrl.buf_req  <= '0';
+    ctrl.buf_sync <= '0';
+    ctrl.buf_dir  <= '0';
+    ctrl.tag      <= (others => '0');
+    ctrl.idx      <= (others => '0');
+    ctrl.ofs_int  <= (others => '0');
+    ctrl.ofs_ext  <= (others => '0');
+  elsif rising_edge(clk_i) then
+    ctrl <= ctrl_nxt;
+  end if;
+end process ctrl_engine_sync;
+```
+
+The buf_req field is '1' when the cache is processing. It is set to one, when the host strobes:
+
+```
+ctrl_nxt.buf_req  <= ctrl.buf_req or host_req_i.stb;
+```
+
+It is set to '0' in the S_CHECK state.
+
+### S_CHECK
+
+The S_CHECK state directly follows the S_DONE state and is basically entered when the cache wants to figure out how to treat a request. S_CHECK is also entered from S_IDLE for instruction that are not FENCE instructions.
+
+The task of S_CHECK is to decide how to handle direct/uncached access, and cache hits and misses for read and write requests. S_CHECK will select either S_IDLE, S_DIRECT_RSP or S_DOWNLOAD_START based on the case.
+
+S_CHECK sets buf_req to '0'. If direct/uncached access is enable, the next state from S_CHECK is chossen to be S_DIRECT_RSP. The other option is chached access. For cached access there are two outcomes. Either a cache hit or a cache miss.
+
+On a cache hit and a read (-only) operation data is taken from the cache and the next state is S_IDLE.
+On a cache hit and a write operation, the hard-coded write-through policy kicks in and ??? TODO understand what happens.
+The next state is S_DIRECT_RSP.
+
+On a cache miss and a read (-only) operation, the state machine goes to S_DOWNLOAD_START. It seems as retrieving data from memory is called a DOWNLOAD.
+On a cache miss and a write operation, the hard-coded write-through policy kicks in and a bus_request with strobe is created and the next state is S_DIRECT_RSP.
+
+### S_IDLE
+
+On reset, the initial state is S_IDLE and buf_req is set to '0'. The state machine remains in the S_IDLE state as long as no external requests come in. External requests are one of buf_sync, host strobes and ongoing ctrl.buf_req.
+
+Also if S_CHECK can serve a read request by a cache hit, it will enter S_IDLE afterwards.
+
+On an event, the next state after S_IDLE is S_CHECK unless buf_sync is '1'. If buf_sync is 1, the next state will be S_CLEAR. The buf_sync flag is activated by FENCE instructions! FENCE causes the RISC-V CPU to finish all I/O operations including memory write throughs. This means the cache will need to be written back to memory.
+
+On the way to the next state S_CHECK, direct/uncached access to the buffer is enabled for atomic operations or if uncached sections of the address space are accessed.
+
+### S_DIRECT_RSP
+
+The S_DIRECT_RSP is used to wait for the memory to signal an acknowledge which means the memory has updated itself on write or has produce a value on read.
+
+> wait for direct memory access response
+
+The system remains in S_DIRECT_RSP until there is a bus_rsp_i.ack = '1' then enters S_IDLE.
+
+### S_DOWNLOAD_START
+
+When S_CHECK determines that there is a cache miss on a read operation, the S_DOWNLOAD_START state is entered. There is a second way that S_CHECK can enter S_DOWNLOAD_START but this way is blocked because the WRITE_THROUGH setting is hard-coded to true. TODO: Also S_DOWNLOAD_WAIT can enter S_DOWNLOAD_START. I do not
+
+It seems as retrieving data from memory is called a DOWNLOAD. On a cache miss, data needs to be DOWNLOADed from memory and inserted into the cache.
+
+For the entire DOWNLOAD procedure (S_DOWNLOAD_START, S_DOWNLOAD_WAIT and S_DOWNLOAD_RUN) the BURSTS_EN generic parameter affects if bursts are used or not.
+
+The DOWNLOAD Procedure is managed by the states S_DOWNLOAD_START, S_DOWNLOAD_WAIT and S_DOWNLOAD_RUN).
+
+| State Name           | State Purpose         |
+| -------------------- | --------------------- |
+| S_DOWNLOAD_START     | start block download / send single request (if no bursts) |
+| S_DOWNLOAD_WAIT      | wait for exclusive (=locked) bus access / response |
+| S_DOWNLOAD_RUN       | bursts enabled: send read requests and get data responses |
+
+In S_DOWNLOAD_START the cache sets an address into the cache_o signals.
+
+```
+cache_o.addr    <= ctrl.tag & ctrl.idx & ctrl.ofs_int & "00";
+```
+
+The cache_o signals are connected to the neorv32_cache_memory instance. neorv32_cache_memory is the actual block of memory where the cache keeps it's data. It is instantiated inside the cache entity.
+
+The cache also sets values inside the bus_req_o signals. The bus_req_o are used to send a request onto the bus so that the RAM is triggered to provide data. Specifially the burst processing is placed into the bus_req_o:
+
+```
+bus_req_o.burst <= bool_to_ulogic_f(BURSTS_EN); -- this is a burst transfer
+```
+
+S_DOWNLOAD_START will then enter S_DOWNLOAD_WAIT.
+
+### S_DOWNLOAD_WAIT
+
+wait for exclusive (=locked) bus access / response.
+
+The system will remain in S_DOWNLOAD_WAIT until a bus response with an acknowledge of '1' arrives.
+A comment says:
+
+```
+-- wait for initial ACK to start actual bursting --
+```
+
+This might mean that until this point the memory has returned data if the type of transfer was a one-shot memory access.
+
+Offsets are advanced by 1
+
+```
+ctrl_nxt.ofs_int <= std_ulogic_vector(unsigned(ctrl.ofs_int) + 1);
+ctrl_nxt.ofs_ext <= std_ulogic_vector(unsigned(ctrl.ofs_ext) + 1);
+```
+
+In the one-shot case, the S_DOWNLOAD_WAIT state enters the S_DOWNLOAD_START state again until all requested blocks have been transferred in one-shot manner. If all blocks have been transferred then S_DOWNLOAD_WAIT proceeds to the S_DONE state.
+
+For bursting no data has been produced by the memory but it is ready for burst-processing. To start burst processing, the system enters then S_DOWNLOAD_RUN state. S_DOWNLOAD_RUN is only used for burst processing.
+
+### S_DOWNLOAD_RUN
+
+> bursts enabled: send read requests and get data responses
+
+The data that the memory has produced and send over the bus is copied into the signal towards the cache internal memory. Rememner, the cache communicates with it's internal memory via the cache_o signals.
+
+```
+cache_o.data    <= bus_rsp_i.data;
+```
+
+A bus request for the memory is prepared and the strobe is set to execute the request:
+
+```
+bus_req_o.addr  <= ctrl.tag & ctrl.idx & ctrl.ofs_ext(offset_size_c-1 downto 0) & "00";
+bus_req_o.rw    <= '0'; -- read access
+bus_req_o.lock  <= '1'; -- this is a locked transfer
+bus_req_o.burst <= '1'; -- this is a burst transfer
+bus_req_o.ben   <= (others => '1'); -- full-word access
+-- send requests --
+if (ctrl.ofs_ext(offset_size_c) = '0') then
+    ctrl_nxt.ofs_ext <= std_ulogic_vector(unsigned(ctrl.ofs_ext) + 1); -- next cache word
+    bus_req_o.stb    <= '1'; -- request next transfer
+end if;
+```
+
+in the snipped above, the offset is incremented for the next iteration (see the line commented with *-- next cache word*)
+
+If there is a bus response ready, the target address is incremented. The data from the response has already been copied to the cache_o signal see above.
+
+```
+-- receive responses --
+if (bus_rsp_i.ack = '1') then
+  ctrl_nxt.ofs_int <= std_ulogic_vector(unsigned(ctrl.ofs_int) + 1); -- next main memory location
+  if (and_reduce_f(ctrl.ofs_int) = '1') then -- block completed
+    ctrl_nxt.state <= S_DONE;
+  end if;
+end if;
+```
+
+When the block to transfer is complete, the system enters S_DONE state. S_DONE enters S_CHECK state.
+
+To be honest, I do not really understand how the process terminates when S_CHECK is entered. In my opinition the state machine cannot enter S_IDLE from S_CHECK.
+
+One possibility might be that the cache miss is turned into a cache hit as data has been retrieved from memory and that way S_CHECK leaves into S_IDLE.
+
+Looking at the cache memory instance, it will update cache_i.sta_hit because hit_o is mapped to cache_i.sta_hit:
+
+```
+-- access status (1 cycle latency due to sync memory read) --
+hit_o <= '1' when (valid_mem_rd = '1') and (tag_rd = tag_ff) else '0'; -- cache access hit
+```
+
+After setting hit_o / cache_i.sta_hit to true, S_CHECK will leave into S_IDLE.
+
+### S_CLEAR
+
+In S_CLEAR
+
+## Bus Hosts
+
 Let's first analyse what makes the cache a bus host.
 
 > Bus hosts like the CPU or the caches can request exclusive access to the downstream bus system using
@@ -2913,7 +3132,7 @@ bus_req_o.lock  <= '1'; -- this is a locked transfer
 bus_req_o.burst <= '1'; -- this is a burst transfer
 ```
 
-Here there is bus lock followed by a burst transfer.
+There is a bus lock followed by a burst transfer.
 
 The CPU frontend (neorv32\rtl\core\neorv32_cpu_frontend.vhd) sets these values to 0
 
@@ -2941,7 +3160,6 @@ begin
 end process bus_lock;
 ```
 
-
 ctrl_nxt.ofs_ext <= std_ulogic_vector(unsigned(ctrl.ofs_ext) + 1); -- next cache word
 
 
@@ -2963,6 +3181,8 @@ Meaning, next to the CPU and the Caches, the Matrix Engine needs to become a bus
 
 One question remains: is the burst transfer using caching? If not, a pure software load with caching might be faster. Evaluate if the burst approach is faster than loading bytes in pure software. The reason why the pure software solution might be faster is because of the speed-up that caches introdue. If the software loads memory cells that are already available in cache, then peforming burst transfers might not be worthwhile because I think burst transfers are not using cache.
 
+
+
 # DMA
 
 https://stnolting.github.io/neorv32/#_direct_memory_access_controller_dma
@@ -2976,3 +3196,10 @@ It is explicitly stated that DMA performs single acces and no bursts:
 There is an application sample for DMA: sw\example\demo_dma\main.c. The sample uses functions specific to the NEORV32 DMA feature such as: neorv32_rte_handler_install(), neorv32_dma_program(), neorv32_dma_start().
 
 So maybe, Matrix Extension instructions that can be explicitly ratified in a future matrix extension to load and store data would more portable than specific NEORV32 functions.
+
+This means that overall DMA has two downsides
+
+1. DMA does not use bursts. For the loading of matrices from memory, bursts are expected to grant a performance increase since consecutive memory needs to be loaded for row-major matrices.
+1. DMA is implemented using custom API functions and not using RISC-V instructions. The matrix extension to the RISC-V standard will use RISC-V instructions. Intrinsics/API C-functions are not the primary result of the extension process.
+
+The idea of using DMA is not further investigated but may well be the better solution overall. Further investigation can be done if there is time left.
