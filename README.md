@@ -3312,7 +3312,7 @@ Here the 16 loads that are part of the burst are displayed as small green diamon
 
 It is hard to take a picture of more than two values, but from the pictures it is clear that the cache streams in the values 1, 2, 3, ... 16.
 
-![image info](res/images/BurstLoad_1.png)
+![image info](res/images/BurstLoad_2.png)
 
 rtl\core\neorv32_cache.vhd first defines a block_num_c constant and a block_size_c constant
 
