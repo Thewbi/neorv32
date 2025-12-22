@@ -76,6 +76,8 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Adding matrix registers](#adding-matrix-registers)
         - [Analysing the X Register File for RV32 instructions](#analysing-the-x-register-file-for-rv32-instructions)
 - [Cache Bus Host](#cache-bus-host)
+    - [Purpose of a Cache](#purpose-of-a-cache)
+    - [Interconnection between the Execution Engine and the Cache](#interconnection-between-the-execution-engine-and-the-cache)
     - [The Cache'S StateMachine](#the-caches-statemachine)
         - [S_CHECK](#s_check)
         - [S_IDLE](#s_idle)
@@ -2897,6 +2899,8 @@ TODO: create a bus request that contains the address of the first element, the s
 
 # Cache (Bus Host)
 
+## Purpose of a Cache
+
 The memory hierarchy might in extrem cases go from (ancient) tape drives up to registers inside the CPU silocone. The closer to the CPU data is stored, the faster processing will be, also the higher the prices and less amount of memory will be available. Matrix manipulation requires the data be transferred from DMEM into the CPU hardware. A cache is inserted into the memory hierachy between CPU and DMEM to speed up processing based on the fact that cache locality is anticipated as applications tend to have a certain amount of locality instead of randomly jumping around in memory. As a feedback effect, software can be designed and structured with cache locality in mind so that the speed up through cache locality will come into effect.
 
 When the cache loads large chunks of DMEM or IMEM using burst transfer and the CPU accesses the cache instead of IMEM and DMEM directly, then a speed-up will occur. A cache-miss however causes a burst-transfer and causes overhead. If the system strikes a net-positive balance between cache-hit and cache-miss, caching will provide a speed-up.
@@ -2913,11 +2917,81 @@ IMEM and DMEM are also implemented to be burst capable
 
 The cache is contained in rtl\core\neorv32_cache.vhd. The file contains two entities: neorv32_cache and neorv32_cache_memory. neorv32_cache_memory is instantiated inside the neorv32_cache architecture.
 
+## Interconnection between the Execution Engine and the Cache
+
+The cache is contained in the entity neorv32_cache.
+
+In the top-level design in neorv32\rtl\core\neorv32_top.vhd, two instances of neorv32_cache are created (per hart that is instantiated!).
+
+```
+  -- CPU core(s) + optional caches + bus switch --
+  core_complex_gen:
+  for i in 0 to num_cores_c-1 generate
+
+  ...
+
+  -- CPU Hart and D-Cache and I-Cache created here.
+
+  end generate; -- /core_complex
+```
+
+One neorv32_cache instance for instructions is connected to the Execution Engine on the one and IMEM on the other side. A second neorv32_cache instance for data is created and placed between the Execution Engine and DMEM.
+
+Section 2.6.1. Bus System (https://stnolting.github.io/neorv32/#_bus_system) of the NEORV32 Datasheet shows how the components are interconnected.
+
+Also (https://stnolting.github.io/neorv32/#_architecture) shows that the Load-Store-Unit is talking to the memory.
+
+```
+-- CPU Data Cache -------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------------------
+neorv32_dcache_enabled:
+if DCACHE_EN generate
+  neorv32_dcache_inst: entity neorv32.neorv32_cache
+  generic map (
+    NUM_BLOCKS => DCACHE_NUM_BLOCKS,
+    BLOCK_SIZE => CACHE_BLOCK_SIZE,
+    UC_BEGIN   => mem_uncached_begin_c(31 downto 28),
+    READ_ONLY  => false,
+    BURSTS_EN  => CACHE_BURSTS_EN
+  )
+  port map (
+    clk_i      => clk_i,
+    rstn_i     => rstn_sys,
+    host_req_i => cpu_d_req(i),
+    host_rsp_o => cpu_d_rsp(i),
+    bus_req_o  => dcache_req(i),
+    bus_rsp_i  => dcache_rsp(i)
+  );
+end generate;
+```
+
+In neorv32\rtl\core\neorv32_top.vhd, cpu_d_req is connected to the neorv32.neorv32_cpu instance which is defined in rtl\core\neorv32_cpu.vhd. The neorv32_cpu is the place where the CPU is assembled from several components like
+
+* the CPU frontend which fetches instructions
+* the CPU control instance (Execution Engine) which executes instructions
+* the ALU
+* the register file(s)
+* the Trigger Module
+* the Hardware Counters
+* the Load/Store Unit
+* the Memory Protection
+* the Trace Generator
+
+The cpu_d_req signal is connected to the Load/Store Unit. The Load/Store Unit in turn has signals that connect it to the CPU control instance (= the Execution Engine). This means if the Execution Engine wants to execute lb, lh, lw, ld or sb, sh, sw and sd, it will create signals for the LoadStore unit. The LoadStore unit talks to the D-Cache and the D-Cache talks to the RAM over the system bus.
+
+HINT: To implement the matrix engine, a second simpler Load/Store unit can be used that talks not to the D-Cache but to the matrix engine. The Matrix-Engine will talk to the RAM over the system bus and use the same code for bursts than the D-Cache uses. The Matrix-Engine will burst load it's internal registers when the Execution Engine executes mle32t instruction. Then on a matrix addition or multiplication, the matrix engine will perform the operation which the result of is buffered inside the matrix engine. On a mse32 instruction, the matrix engine will write back the data into memory and the D-Cache needs to be invalidated since the memory has changed.
+
+Another design would be to make the Execution Engine to talk to the Matrix-Engine instead of the Load-Store unit and connect the Matrix-Engine to the same D-Cache as the LoadStore unit. That way, the Matrix-Engine share Cache locality with the hart and it will also update that D-Cache so that the normal Load/Store unit has valid data when the execution engine wants to read the matrix data using sb, sh, sw and sd.
+
+This means that in neorv32\rtl\core\neorv32_top.vhd everything remains the same.
+
+In rtl\core\neorv32_cpu.vhd the Matrix Engine is inserted next to the Load/Store unit and connected to the same D-Cache. The Matrix Engine needs to be connected to the Execution Engine with it's own set of signals. When the Execution Engine executes mle32 and mse32 it has to talk to the Matrix Engine instead of the Load/Store Unit. The D-Cache needs to have flexible burst sizes so that the Matrix-Engine can decide how many bytes, half-words or words to load in one burst.
+
+## The Cache'S StateMachine
+
 The function *function index_size_f(input : natural) return natural* is described as:
 
 > Minimal required number of bits to represent <input> numbers
-
-## The Cache'S StateMachine
 
 In principle, the cache internally uses a state machine. The state machine updates signals of type ctrl_t. It has a current ctrl_t signal (called ctrl) and a ctrl_t signal that store the values for the next iteration (called ctrl_nxt).
 
@@ -3114,7 +3188,38 @@ After setting hit_o / cache_i.sta_hit to true, S_CHECK will leave into S_IDLE.
 
 ### S_CLEAR
 
-In S_CLEAR
+In S_CLEAR, the cache internal memory is cleared. The cache will produce cache misses and downloads from RAM are triggered as a result to that.
+
+S_CLEAR is entered on FENCE operations, in other words when *ctrl.buf_sync = '1'* in S_IDLE as buf_sync is triggered by fence instructions emitted by the host.
+
+```
+ctrl_nxt.buf_sync <= ctrl.buf_sync or host_req_i.fence;
+```
+
+The *cache_o.cmd_clr* signal is set to 1. cache_o is the connection between the cache and it's internal memory instance.
+
+```
+cache_o.cmd_clr   <= '1';
+```
+
+Inside the cache internal memory the *cmd_clr* signal invalidates the entire cache and marks it not-dirty:
+
+```
+-- valid flags --
+if (clr_i = '1') then -- invalidate entire cache
+  valid_mem <= (others => '0');
+elsif (new_i = '1') then -- make accessed block valid
+  valid_mem(to_integer(unsigned(acc_idx))) <= '1';
+end if;
+-- dirty flags --
+if (clr_i = '1') then -- invalidate entire cache
+  dirty_mem <= (others => '0');
+elsif (new_i = '1') then -- make accessed block clean
+  dirty_mem(to_integer(unsigned(acc_idx))) <= '0';
+elsif (we_i /= "0000") then -- modify cache content
+  dirty_mem(to_integer(unsigned(acc_idx))) <= '1';
+end if;
+```
 
 ## Bus Hosts
 
