@@ -125,7 +125,11 @@ The CPU is simulated for the real-time period specified via the --stop-time para
 
 The signal traces go into the waveform file sim\neorv32.vcd which you can open and analyze in GTKWave, Surfer or other waveform viewers.
 
-To start surfer, install rust and build it using cargo
+I recommend using surfer since it is free (and open source, no license files from huge corporations required), easy to download and compile (you need to install Rust however), easy to use with a intuitive interface and it has very high performance when it comes to starting up and also displaying the traces using graphics.
+
+To build surfer (https://surfer-project.org/), install rust, clone the surfer repository, enter the surfer subfolder and build it using *cargo build*.
+
+To run surfer, you can use *cargo run* or start the executable in the target/debug folder.
 
 ```
 git clone https://gitlab.com/surfer-project/surfer.git
@@ -321,7 +325,7 @@ begin
 end
 ```
 
-Then, inside the process body, transfer data into the line variable and print the line variable in a second step using writeline()
+Then, inside the process body, transfer data into the line variable and print the line variable in a second step using writeline():
 
 ```
 use std.textio.all;
