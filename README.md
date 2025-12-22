@@ -20,6 +20,10 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
 - [Simulation](#simulation)
 - [Execution Engine](#execution-engine)
 - [Finding executed instructions](#finding-executed-instructions)
+- [Tipps for Debugging using .vcd trace files](#tipps-for-debugging-using-vcd-trace-files)
+    - [Finding the Simulation Time when an Instruction is executed](#finding-the-simulation-time-when-an-instruction-is-executed)
+    - [Comparing two .vcd files](#comparing-two-vcd-files)
+    - [Printing Strings and Object](#printing-strings-and-object)
 - [Adding custom instructions](#adding-custom-instructions)
     - [Select the Mnemonic](#select-the-mnemonic)
     - [Select the Encoding](#select-the-encoding)
@@ -55,6 +59,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Triggering the FPU](#triggering-the-fpu)
 - [Loading data from Memory into Registers](#loading-data-from-memory-into-registers)
     - [Execution Engine States for Memory Access](#execution-engine-states-for-memory-access)
+    - [RAM IMEM and DMEM](#ram-imem-and-dmem)
     - [Load Store Unit LSU](#load-store-unit-lsu)
 - [Extending NEORV32 by the Vector V Extension](#extending-neorv32-by-the-vector-v-extension)
     - [V Extension Hardware Additions](#v-extension-hardware-additions)
@@ -67,6 +72,11 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
 - [Extending NEORV32 with a Matrix Extension](#extending-neorv32-with-a-matrix-extension)
     - [Opcodes](#opcodes)
     - [Matrix Dimensions](#matrix-dimensions)
+    - [Adding matrix registers](#adding-matrix-registers)
+        - [Analysing the X Register File for RV32 instructions](#analysing-the-x-register-file-for-rv32-instructions)
+- [Cache Bus Host](#cache-bus-host)
+- [Burst Transfers for Bus Hosts](#burst-transfers-for-bus-hosts)
+- [DMA](#dma)
 
 <!-- /TOC -->
 
@@ -101,23 +111,28 @@ Install Msys2. Inside the Msys2 console, install GHDL.
 
 ```
 cd /c/Users/lapto/dev/VHDL/neorv32/sim
-sh ghdl.sh --stop-time=20ms --vcd=neorv32.vcd
-
 sh ghdl.sh --stop-time=20us --vcd=neorv32.vcd
+```
 
+```
+sh ghdl.sh --stop-time=20ms --vcd=neorv32.vcd
 sh ghdl.sh --stop-time=20ns --vcd=neorv32.vcd
 ```
 
-The shell script will compile (analyse, evaluate with GHDL) the
-processor and start a simulation. The signal traces go into the
-waveform file neorv32.vcd which you can open and analyze in
-GTKWave, Surfer or other waveform viewers.
+The shell script will compile (analyse, evaluate with GHDL) the processor and start a simulation.
 
-The CPU is simulated for the real-time period specified via
-the --stop-time parameter. The simulation takes much longer than
-the specified real time period. It is probably smart to first
-try with 20us instead of 20ms. 20ns is not enough to get the
-CPU to process relevant data.
+The CPU is simulated for the real-time period specified via the --stop-time parameter. The simulation takes much longer in real world time than the specified time period to simulate the design for. It is probably smart to first try with a simulation duration of 20us instead of 20ms. 20ns is not enough to get the CPU to process relevant data.
+
+The signal traces go into the waveform file sim\neorv32.vcd which you can open and analyze in GTKWave, Surfer or other waveform viewers.
+
+To start surfer, install rust and build it using cargo
+
+```
+git clone https://gitlab.com/surfer-project/surfer.git
+cd C:\Users\lapto\dev\rust\surfer\surfer
+cargo build
+cargo run
+```
 
 # Execution Engine
 
@@ -222,6 +237,14 @@ ways. For example the compressed instruction 0x00002b27 is fetched, then
 The execution engine is displayed in the lower traces thanks to the
 debug-signals inserted above.
 
+The following traces are of interest
+
+```
+core_complex_gen(0) > neorv32_cpu_inst > neorv32_cpu_alu_inst > debug_alu_op
+core_complex_gen(0) > neorv32_cpu_inst > neorv32_cpu_control_inst > debug_instr_i
+core_complex_gen(0) > neorv32_cpu_inst > neorv32_cpu_control_inst > debug_valid_i
+```
+
 The *debug_instr* trace contains the instruction that the execution engine
 sees and the *debug_valid* trace dictates if the execution engine is triggered
 to consume the instruction. If the valid signal is low, the execution engine
@@ -230,6 +253,104 @@ ignores the instruction.
 The execution engine traces show which instructions are executed by the CPU.
 For example the second fetch of the compressed instruction 0x00002b27 is ignored
 by the execution engine as the *debug_valid* signal is low.
+
+# Tipps for Debugging using .vcd trace files
+
+## Finding the Simulation Time when an Instruction is executed
+
+In the case you want to find out, when an instruction is executed for the first time and you happen to have identified a signal that carries instruction, meaning you do have a signal in the .vcd file that will actually show the instruction.
+
+In that case, convert the instruction to binary, and look for the binary value in the .vcd file.
+
+For example, the instruction 0x000797F7 has the binary pattern 01111001011111110111. Now look for the binary pattern in the .vcd file. Scroll up at the first find until you encounter the timestamp.
+
+```
+#8090000000
+```
+
+Now scroll to this timestamp in the waveform viewer.
+
+The ALU_A input signal is called neorv32_tb.neorv32_top_inst.core_complex_gen(0).neorv32_cpu_inst.rs1
+The ALU_B input signal is called neorv32_tb.neorv32_top_inst.core_complex_gen(0).neorv32_cpu_inst.rs2
+
+The register file is defined in rtl\core\neorv32_cpu_regfile.vhd. The entity is called neorv32_cpu_regfile. It is instantiated as a child of the neorv32_cpu entity.
+
+The register file contains the signal neorv32_tb.neorv32_top_inst.core_complex_gen(0).neorv32_cpu_inst.neorv32_cpu_regfile_inst.rd_i. This is where loaded
+
+## Comparing two .vcd files
+
+Sometimes, it is a good idea to copy a section of existing code to use as a starting point for an extension of the functionality. When copying a portion of the code, the likelyhood that other changes should be copied and adjusted too are high.
+
+An example is to extend the system by another variant of lb, lh, lw and ld. In order to achieve this, code for the execution engine state EX_MEM_REQ and EX_MEM_RSP can be copied to new states. When introducing a new instruction for load operations from memory into to the register file, it is not enough to just copy execution engine states and make the state machine transition into those new states, also signals that are placed on the bus need to be copied. Another required change is to tell the execution engine to place a signal on the bus which causes the Load-Store-Unit (LSU) to enable writeback when it has entered the newly copied states:
+
+A change from
+
+```
+ctrl_o.lsu_mo_we    <= '1' when (exe_engine.state = EX_MEM_REQ) else '0'; -- write memory output registers (data & address)
+```
+
+to
+
+```
+ctrl_o.lsu_mo_we    <= '1' when (exe_engine.state = EX_MEM_REQ or exe_engine.state = EX_MATRIX_MEM_REQ) else '0'; -- write memory output registers (data & address)
+```
+
+is required.
+
+If you do not know this then no value is loaded into the register file, since the register file is not enabled to read results back.
+
+In order to identify this problem, run the simulation using a normal, working lb, lh, lw, ld command and store the .vcd file aside. Then run the simulation again with the newly updated instruction that does not work. Store the other .vcd file aside.
+
+Now, open two instances of the surfer trace viewer and check the signals side-by-side. This takes a little bit of time especially since you have to add signals until you find the signals that differ in boths .vcd files. But eventually you will identify the missing signal. In the example above, the difference is the value of the lsu_mo_we signal which is the write enable for the register file.
+
+This is in a sense a type of tool assisted debugging. Instead of just pondering about the code in the editor you visually compare images on the screen which is a task our brain excells in. Reasoning about code is far more difficult than the task of comparing images, especially as you need to keep a lot of context about the code in your memory when reading code. Comparing images is a local task which does not require a lot of context.
+
+## Printing Strings and Object
+
+It is possible to print text to the console during simulation. Obviously, this feature is not part of the synthesisable subset of VHDL. The GHDL evaluator and simulator support this feature.
+
+First, import the std.textio package and define a variable of type line, to store a string. You need to define variables in the defintion section of a process:
+
+```
+use std.textio.all;
+
+process(...)
+    variable l : line;
+begin
+    ...
+end
+```
+
+Then, inside the process body, transfer data into the line variable and print the line variable in a second step using writeline()
+
+```
+use std.textio.all;
+
+process(...)
+    variable l : line;
+begin
+
+    ...
+
+    -- DEBUG
+    write(l, String'("EX_MEM_REQ"));
+    writeline(output, l);
+
+    ...
+
+end
+```
+
+It is not possible to achieve this in a single line.
+
+write() is able to format objects to a string representation. This allows you to output vectors for example:
+
+```
+write(l, trap_ctrl.exc_buf);
+writeline(output, l);
+```
+
+
 
 # Adding custom instructions
 
@@ -1074,6 +1195,9 @@ int main() {
 Check if it compiles still. (Expected output is the same as above)
 
 ```
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
+PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
+
 cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/add1
 make all
 ```
@@ -2129,7 +2253,7 @@ The entire design is pretty elaborate. It might be the largest entitiy I have se
 
 ## Execution Engine States for Memory Access
 
-The execution entity in rtl\core\neorv32_cpu_control.vhd identifies instructions that access memory in the EX_EXECUTE state and then changes to the EX_MEM_REQ state.
+The execution engine entity in rtl\core\neorv32_cpu_control.vhd identifies instructions that access memory in the EX_EXECUTE state and then changes to the EX_MEM_REQ state.
 
 ```
 -- memory access --
@@ -2166,6 +2290,18 @@ when EX_MEM_RSP => -- wait for memory response
     end if;
 ```
 
+## RAM (IMEM and DMEM)
+
+https://stnolting.github.io/neorv32/#_direct_memory_access_controller_dma
+
+In the Harvard Architecture, instructions and memory are stored in separate memories. The NEORV32 CPU uses the Harvard Architecture. The component for instruction and data memory are contained in rtl\core\neorv32_imem.vhd and rtl\core\neorv32_dmem.vhd.
+
+https://stnolting.github.io/neorv32/#_bus_interface:
+
+> The NEORV32 CPU provides separated instruction fetch and data access interfaces making it a Harvard Architecture: the instruction fetch interface (i_bus_* signals) is used for fetching instructions and the data access interface (d_bus_* signals) is used to access data via load and store operations. Each of these interfaces can access an address space of up to 232 bytes (4GB).
+
+
+
 ## Load Store Unit (LSU)
 
 The Load Store Unit is the component that talks to the memory. It is controlled by the execution engine when a instruction for memory access is executed.
@@ -2186,11 +2322,11 @@ The encoding looks like this: https://luplab.gitlab.io/rvcodecjs/#q=lb&abi=false
 
 The funct3 value is 000. This is the pattern form a ALU add operation according to the constant funct3_sadd_c from rtl\core\neorv32_package.vhd. This means for the lb instruction, the ALU will perform an addition. The addition will add the register rs1 to the immediate which contains the offset in order to build the address to load from.
 
-The immediate is decoded ???
+The immediate is decoded where ???
 
 When a load byte/half-word/word instruction is executed for example, the address to read from memory is decoded from the instruction where ???
 
-The Load-Store-Unit has the purpose to produce a bus request which will cause the memory to load the requested data an place it onto the bus. The Load-Store-Unit writes the address into the bus-request:
+The Load-Store-Unit does not interface with RAM directly, instead it's purpose is to produce a bus request which will cause the memory to load the requested data and place it onto the bus. The Load-Store-Unit writes the address into the bus-request:
 
 ```
 -- address output --
@@ -2206,7 +2342,8 @@ mar <= addr_i; -- memory address register
 Here addr_i is an input port. addr_i gets it's value from alu_add! This makes sense since the ALU has to add the immediate offset to the content of the source register 1 in order to compute the address to load from memory.
 
 See rtl\core\neorv32_cpu.vhd
-```
+
+```VHDL
 -- Load/Store Unit (LSU) ------------------------------------------------------------------
   -- -------------------------------------------------------------------------------------------
   neorv32_cpu_lsu_inst: entity neorv32.neorv32_cpu_lsu
@@ -2635,6 +2772,22 @@ https://courses.cs.washington.edu/courses/cse351/cachesim/
 
 The opcode 1110111 is used for the matrix extension. This opcode is also used in https://lists.riscv.org/g/sig-vector/attachment/10/0/RISC-V%20Matrix%20Extension%20Introduction.pdf
 
+
+
+The opcode for lw is 0b0000011
+
+| bit # | bit value | meaning |
+| ----- | --------- | ------- |
+| 6     | 0         | ALU operation if '1'        |
+| 5     | 0         | ?        |
+| 4     | 0         | atomic operation if         |
+| 3     | 0         |         |
+| 2     | 0         | plays a role if the instruction is a branch-statement        |
+| 1     | 1         | not compressed        |
+| 0     | 1         | not compressed        |
+
+
+
 The mset[i]ml[i] instructions use a funct7 and are of R-Type.
 
 |     mnemonic | opcode (7 bit) | funct3 (3 bit) | funct7 (7 bit) | remark |
@@ -2678,3 +2831,144 @@ A quick example shows that mutliplying (non-power-of-two) 3x3 matrices yields th
 7 8 9 0   7 8 9 0   102 126 150 0
 0 0 0 0   0 0 0 0     0   0   0 0
 ```
+
+## Adding matrix registers
+
+As an alternative approach see Matrix engine on the bus
+
+The goal is to define CPU internal storage to copy the elements of a sub-tile into. Once the sub-tile is loaded into the CPU, a matrix-node can manipulate the tiles with high speed. Two tiles can be added, subtracted, multiplied together. A single tile can be modified by a operation between a matrix and a scalar. A matrix tile could be transposed.
+
+The RV32 instructions lb, lh, lw and the RV64 instruction ld (https://msyksphinz-self.github.io/riscv-isadoc/html/rv64i.html#ld) load data from memory into the register file called x. x is the basic register file specified for RISC-V.
+
+For the Matrix Extension, the x register file needs to be placed as a sibling to the m register file for matrixes so that the instruction mle32 can load into the m register file.
+
+### Analysing the X Register File (for RV32 instructions)
+
+First, an analysis over the x register file follows. The x register file is defined in rtl\core\neorv32_cpu_regfile.vhd and instantiated as part of the rtl\core\neorv32_cpu.vhd. The signal rf_wdata carries the value that goes into the destination register. rf_wdata is therefore mapped to the register file's rd_i port.
+
+rf_wdata is the combination of several sources:
+
+```VHDL
+-- all buses are zero unless there is an according operation --
+rf_wdata <= alu_res or lsu_rdata or csr_rdata or ctrl.pc_ret;
+```
+
+Out of these four sources, the lsu_rdata must be the one that carries data loaded from memory. As a quick idea, there needs to be the same expression duplicated for the m register file:
+
+```VHDL
+-- all buses are zero unless there is an according operation --
+m_rf_wdata <= lsu_rdata;
+```
+
+m_rf_wdata has the m_ prefix to express that this signal is connected the the m register file.
+During the execution of a matrix instruction, the x register has to be write disable and the m register has to be write enabled. During the execution of a base RV32 instruction, x is enabled and m is disabled. The register file need to be mutually write enabled/disabled since the signals rf_wdata and m_rf_wdata will always carry data not matter what type of instruction is executed and so the destination register file has to be prevented from accepting the value.
+
+Internally the space for the registers is synthesable in two flavors. The selection with synthesis method to use is done with the RST_EN generic input to the entity.
+
+The first option (RST_EN == false) is to let the sythesis toolchain lower the register file to block RAM available in the FPGA and save on logic cells that way. The disadvantage is that this RAM cannot be reset. Garbage data will float around in this type of RAM as is the case with RAM on power up. I do not get how this is a disadvantage or when you have the necessity to ever reset your RAM in one go. I never had the requirement to set my entire RAM to zeroes in an instant. I do not have enough experience to see the consequences of this type of RAM.
+
+The second option (RST_EN == true) generates the register file using flip-flops and thereby consumes logic cells instead of using Block RAM. This type of RAM can be reset. As already mentioned, this is kind of a non-realistic use case in my opinion. But I probably just do not get the point.
+
+
+
+TODO: create a bus request that contains the address of the first element, the stride and the run-width. The load store engine has to load all the data. The bus response has to contain all data.
+
+
+
+
+
+# Cache (Bus Host)
+
+The memory hierarchy might in extrem cases go from (ancient) tape drives up to registers inside the CPU silocone. The close to the CPU data is stored, the faster processing will be, also the higher the prices and less amount of memory will be available. Matrix manipulation requires the data be transferred from DMEM into the CPU hardware. A cache is inserted into the memory hierachy between CPU and DMEM to speed up processing based on the fact that cache locality is anticipated as applications tend to have a certain amount of locality instead of randomly jumping around in memory. As a feedback effect, software can be designed and structured with cache locality in mind so that thee speed up through cache locality will come into effect.
+
+When the cache loads large chunks of DMEM or IMEM using burst transfer and the CPU accesses the cache instead of IMEM and DMEM directly, then a speed-up will occur. A cache-miss however causes a burst-transfer and causes overhead. If the system strikes a net-positive balance between cache-hit and cache-miss, caching will provide a speed-up.
+
+Caches can perform burst loads to update themselves.
+
+> CACHE_BURSTS_EN    boolean    true    Enable burst transfers for cache updates.
+
+IMEM and DMEM are also implemented to be burst capable
+
+> Key-Features Burst-capable tightly-coupled on-chip instruction memory
+
+> Key-Features Burst-capable tightly-coupled on-chip data memory
+
+The cache is contained in rtl\core\neorv32_cache.vhd. The file contains two entities: neorv32_cache and neorv32_cache_memory. neorv32_cache_memory is instantiated inside the neorv32_cache architecture.
+
+Let's first analyse what makes the cache a bus host.
+
+> Bus hosts like the CPU or the caches can request exclusive access to the downstream bus system using
+the "bus lock" mechanism.
+
+The bus lock
+
+The cache executes bursts like this:
+
+```
+bus_req_o.lock  <= '1'; -- this is a locked transfer
+bus_req_o.burst <= '1'; -- this is a burst transfer
+```
+
+Here there is bus lock followed by a burst transfer.
+
+The CPU frontend (neorv32\rtl\core\neorv32_cpu_frontend.vhd) sets these values to 0
+
+```
+ibus_req_o.burst <= '0';              -- only single-access
+ibus_req_o.lock  <= '0';              -- always unlocked access
+```
+
+The LSU (neorv32\rtl\core\neorv32_cpu_lsu.vhd) also can lock the bus and locks the bus based on which instruction is executed.
+
+```
+-- Bus-Locking (for atomic read-modify-write operations) ----------------------------------
+-- -------------------------------------------------------------------------------------------
+bus_lock: process(rstn_i, clk_i)
+begin
+  if (rstn_i = '0') then
+    dbus_req_o.lock <= '0';
+  elsif rising_edge(clk_i) then
+    if (ctrl_i.lsu_mo_we = '1') and (ctrl_i.lsu_rmw = '1') and (ctrl_i.ir_funct12(8) = '0') then
+      dbus_req_o.lock <= '1'; -- set if Zaamo instruction
+    elsif (dbus_rsp_i.ack = '1') or (ctrl_i.cpu_trap = '1') then
+      dbus_req_o.lock <= '0'; -- clear at the end of the bus access
+    end if;
+  end if;
+end process bus_lock;
+```
+
+
+ctrl_nxt.ofs_ext <= std_ulogic_vector(unsigned(ctrl.ofs_ext) + 1); -- next cache word
+
+
+
+
+# Burst Transfers for Bus Hosts
+
+Make the Matrix Engine it's own module and connect it to the bus so that burst transfers of DMEM data into the Matrix Engine are possible. As only Bus Hosts can perform burst transfers, the matrix engine needs to become a bus host.
+
+As bursts transfer consecutive runs of data cells, this conflicts with the strided nature of sub-tiles of a larger matrix. Therefore the idea is that software needs to issue a load instruction for all the bursts required to load a tile. Example for a 16x16 tile, emit 16 load instructions to burst 16 elements per call into the matrix engine. The software application has to take care of the striding. The application has to compute the start address of each burst by advancing the pointer by the stride length in each iteration.
+
+Question: how large is the overhead? Is this faster than single lb, lh, lw, ld calls when the single-loads use caching?
+
+https://stnolting.github.io/neorv32/#_locked_bus_accesses_and_bursts
+
+> Bus hosts like the CPU or the caches can request exclusive access to the downstream bus system using the "bus lock" mechanism. When the bus is locked the locking host has exclusive access and can issue an arbitrary number of transfers that cannot be interleaved by any other host. This feature is used to implement atomic read-modify-write operations and for burst transfers.
+
+Meaning, next to the CPU and the Caches, the Matrix Engine needs to become a bus host so that it can perform burst transfers to copy several bytes into itself.
+
+One question remains: is the burst transfer using caching? If not, a pure software load with caching might be faster. Evaluate if the burst approach is faster than loading bytes in pure software. The reason why the pure software solution might be faster is because of the speed-up that caches introdue. If the software loads memory cells that are already available in cache, then peforming burst transfers might not be worthwhile because I think burst transfers are not using cache.
+
+# DMA
+
+https://stnolting.github.io/neorv32/#_direct_memory_access_controller_dma
+
+Another way to transfer data into the matrix engine could be DMA maybe?
+
+It is explicitly stated that DMA performs single acces and no bursts:
+
+> Transactions performed by the DMA are executed as bus transactions with elevated machine-mode privilege level. Note that any physical memory protection rules (Smpmp ISA Extension) are not applied to DMA transfers. Furthermore, the DMA uses single-transfers only (.e. no burst transfers).
+
+There is an application sample for DMA: sw\example\demo_dma\main.c. The sample uses functions specific to the NEORV32 DMA feature such as: neorv32_rte_handler_install(), neorv32_dma_program(), neorv32_dma_start().
+
+So maybe, Matrix Extension instructions that can be explicitly ratified in a future matrix extension to load and store data would more portable than specific NEORV32 functions.
