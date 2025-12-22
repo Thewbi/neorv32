@@ -86,9 +86,12 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
         - [S_DOWNLOAD_WAIT](#s_download_wait)
         - [S_DOWNLOAD_RUN](#s_download_run)
         - [S_CLEAR](#s_clear)
+        - [Burst Length](#burst-length)
+        - [Small Visualization](#small-visualization)
     - [Bus Hosts](#bus-hosts)
 - [Burst Transfers for Bus Hosts](#burst-transfers-for-bus-hosts)
 - [DMA](#dma)
+- [Trapattonization](#trapattonization)
 
 <!-- /TOC -->
 
@@ -2989,10 +2992,6 @@ In rtl\core\neorv32_cpu.vhd the Matrix Engine is inserted next to the Load/Store
 
 ## The Cache'S StateMachine
 
-The function *function index_size_f(input : natural) return natural* is described as:
-
-> Minimal required number of bits to represent <input> numbers
-
 In principle, the cache internally uses a state machine. The state machine updates signals of type ctrl_t. It has a current ctrl_t signal (called ctrl) and a ctrl_t signal that store the values for the next iteration (called ctrl_nxt).
 
 ```
@@ -3221,6 +3220,177 @@ elsif (we_i /= "0000") then -- modify cache content
 end if;
 ```
 
+### Burst Length
+
+How many elements are loaded in a burst?
+
+To answer that question, we need to understand how the cache is organized. First get to know the function *index_size_f()*
+
+The function
+
+```
+function index_size_f(input : natural) return natural
+```
+
+is described as:
+
+> Minimal required number of bits to represent <input> numbers
+
+```
+-- Minimal required number of bits to represent <input> numbers ---------------------------
+-- -------------------------------------------------------------------------------------------
+function index_size_f(input : natural) return natural is
+begin
+  for i in 0 to 31 loop
+    if (2**i >= input) then
+      return i;
+    end if;
+  end loop;
+  return 0;
+end function index_size_f;
+```
+
+This means, given a natural number value it returns the amount of bits to correctly represent that natural number.
+
+The cache entity has generic parameters. Two of those generic parameters are used to describe the cache geometry (= size of the cache):
+
+```
+entity neorv32_cache is
+generic (
+  NUM_BLOCKS : natural range 2 to 1024;       -- number of cache blocks (min 2), has to be a power of 2
+  BLOCK_SIZE : natural range 8 to 32768;      -- cache block size in bytes (min 8), has to be a power of 2
+```
+
+When instantiating the D-Cache in rtl\core\neorv32_top.vhd, the constants DCACHE_NUM_BLOCKS and CACHE_BLOCK_SIZE are inserted into the D-Cache instantiation:
+
+```
+-- d-cache: number of blocks (min 1), has to be a power of 2
+DCACHE_NUM_BLOCKS     : natural range 1 to 4096        := 4;
+
+-- i-cache/d-cache: block size in bytes (min 8), has to be a power of 2
+CACHE_BLOCK_SIZE      : natural range 8 to 1024        := 64;
+```
+
+```
+-- CPU Data Cache -------------------------------------------------------------------------
+-- -------------------------------------------------------------------------------------------
+neorv32_dcache_enabled:
+if DCACHE_EN generate
+  neorv32_dcache_inst: entity neorv32.neorv32_cache
+  generic map (
+    NUM_BLOCKS => DCACHE_NUM_BLOCKS,
+    BLOCK_SIZE => CACHE_BLOCK_SIZE,
+```
+
+This means a cache block is 64 bytes in size and there are 4 blocks in the cache.
+
+HINT: Using 64 bytes, the cache will perform 16 loads of a word (4 byte) each load! So in the trace viewer, instead of 64 loads, there will only be 16 loads (16 x 4 byte = 64 byte).
+
+### Small Visualization
+
+When this C-Application is executed, the cache first loads 16 elements into one of it's four cache blocks:
+
+```
+uint32_t matrix_a[16]
+  = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+
+int main() {
+
+    ...
+
+    uint32_t *matrix_a_addr = &matrix_a[1];
+
+    ...
+
+    return 0;
+}
+```
+
+Here the 16 loads that are part of the burst are displayed as small green diamonds.
+
+![image info](res/images/BurstLoad_1.png)
+
+It is hard to take a picture of more than two values, but from the pictures it is clear that the cache streams in the values 1, 2, 3, ... 16.
+
+![image info](res/images/BurstLoad_1.png)
+
+rtl\core\neorv32_cache.vhd first defines a block_num_c constant and a block_size_c constant
+
+```
+-- make sure cache sizes are a power of two --
+constant block_num_c  : natural := 2**index_size_f(NUM_BLOCKS); -- amount of blocks
+constant block_size_c : natural := 2**index_size_f(BLOCK_SIZE); -- size of each individual block
+```
+
+With NUM_BLOCKS = 4 block_num_c is 2^index_size_f(NUM_BLOCKS) = 2^2 = 4 and with BLOCK_SIZE = 64, block_size_c = 2^index_size_f(BLOCK_SIZE) = 2^6 = 64
+
+This means that the cache reconstructs the amount of bits that are required to encode blocks (block_num_c) and the block size (block_size_c) from the parameters. The benefit is that this reconstruction guarantees that block_num_c and block_size_c are always a power of 2.
+
+Next step is to understand the creation of addresses for internal and external memories:
+
+```
+cache_o.addr    <= ctrl.tag & ctrl.idx & ctrl.ofs_int & "00";
+...
+bus_req_o.addr  <= ctrl.tag & ctrl.idx & ctrl.ofs_ext(offset_size_c-1 downto 0) & "00";
+```
+
+The cache_o.addr is the internal address and the bus_req_o.addr is the external address. By internal the address inside the internal cache memory is meant. External refers the the address in RAM. These two addresses are required since there will be data transfer from RAM into the cache. To transfer data a address in RAM (external) to load from and a address in internal memory (the cache memory) to store into is required.
+
+The cache_o.addr is a concatenation of ctrl.tag, ctrl.idx and ctrl.ofs_int followed by two zeroes.
+
+Here are the definitions:
+
+```
+-- cache layout --
+constant offset_size_c : natural := index_size_f(block_size_c/4); -- word offset
+constant index_size_c  : natural := index_size_f(block_num_c);
+constant tag_size_c    : natural := 32 - (offset_size_c + index_size_c + 2);
+```
+
+This means offset_size_c is index_size_f(block_size_c/4) = index_size_f(64/4) = index_size_f(16) = 4
+
+index_size_c = index_size_f(block_num_c) = index_size_f(4) = 2
+
+tag_size_c = 32 - (offset_size_c + index_size_c + 2) = 32 - (4 + 2 + 2) = 24
+
+Then there are two bits reserved for the "00" postfix for word-alignment.
+
+```
+type ctrl_t is record
+  state    : state_t; -- state machine
+  buf_req  : std_ulogic; -- access request buffer
+  buf_sync : std_ulogic; -- synchronization request buffer
+  buf_dir  : std_ulogic; -- direct/uncached access buffer
+  tag      : std_ulogic_vector(tag_size_c-1 downto 0); -- tag
+  idx      : std_ulogic_vector(index_size_c-1 downto 0); -- index
+  ofs_int  : std_ulogic_vector(offset_size_c-1 downto 0); -- cache address offset
+  ofs_ext  : std_ulogic_vector(offset_size_c downto 0); -- bus address offset
+end record;
+```
+
+Looking at the ctrl_t record definition above, the tag field will be std_ulogic_vector(23 downto 0).
+
+The idx field is std_ulogic_vector(1 downto 0)
+
+The ofs_int field is std_ulogic_vector(3 downto 0)
+
+The ofs_ext field is std_ulogic_vector(4 downto 0)
+
+
+Here is how the addresses are constructed:
+
+```
+cache_o.addr    <= ctrl.tag & ctrl.idx & ctrl.ofs_int & "00";
+bus_req_o.addr  <= ctrl.tag & ctrl.idx & ctrl.ofs_ext(offset_size_c-1 downto 0) & "00";
+```
+
+```
+cache_o.addr:   [0000 0000 0000 0000 0000 0000] [00] [0000] "00" -> 32 bit
+bus_req_o.addr: [0000 0000 0000 0000 0000 0000] [00] [0000] "00" -> 32 bit
+```
+
+The tag is the largest part of the address, the tag is ???
+
 ## Bus Hosts
 
 Let's first analyse what makes the cache a bus host.
@@ -3308,3 +3478,9 @@ This means that overall DMA has two downsides
 1. DMA is implemented using custom API functions and not using RISC-V instructions. The matrix extension to the RISC-V standard will use RISC-V instructions. Intrinsics/API C-functions are not the primary result of the extension process.
 
 The idea of using DMA is not further investigated but may well be the better solution overall. Further investigation can be done if there is time left.
+
+# Trapattonization
+
+> „Ich habe fertig“
+
+Giovanni Trapattoni, 10. März 1998
