@@ -25,6 +25,10 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Finding the Simulation Time when an Instruction is executed](#finding-the-simulation-time-when-an-instruction-is-executed)
     - [Comparing two .vcd files](#comparing-two-vcd-files)
     - [Printing Strings and Object](#printing-strings-and-object)
+        - [Printing Objects](#printing-objects)
+        - [Hexadecimal Format](#hexadecimal-format)
+        - [Printing the integer datatype](#printing-the-integer-datatype)
+        - [the report keyword](#the-report-keyword)
 - [Adding custom instructions](#adding-custom-instructions)
     - [Select the Mnemonic](#select-the-mnemonic)
     - [Select the Encoding](#select-the-encoding)
@@ -75,6 +79,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Matrix Dimensions](#matrix-dimensions)
     - [Adding matrix registers](#adding-matrix-registers)
         - [Analysing the X Register File for RV32 instructions](#analysing-the-x-register-file-for-rv32-instructions)
+    - [Multiplying Matrix Registers](#multiplying-matrix-registers)
 - [Cache Bus Host](#cache-bus-host)
     - [Purpose of a Cache](#purpose-of-a-cache)
     - [Interconnection between the Execution Engine and the Cache](#interconnection-between-the-execution-engine-and-the-cache)
@@ -126,6 +131,7 @@ Install Msys2. Inside the Msys2 console, install GHDL.
 
 ```
 cd /c/Users/lapto/dev/VHDL/neorv32/sim
+cd /c/Users/lapto/dev/VHDL/NEORV32_MatrixExtension/sim
 sh ghdl.sh --stop-time=20us --vcd=neorv32.vcd
 ```
 
@@ -156,6 +162,10 @@ cd C:\Users\lapto\dev\rust\surfer\surfer
 cargo build
 cargo run
 ```
+
+In the sim folder, there is a .surf.ron file. This file contains a configuration of signals. To load the .surf.ron file, select File > Load State ...
+
+The load a .vcd file. Surfer will ask to load a .surf.ron file if it detects one in the same folder as the .vcd file. This makes loading in the previously configured signals easy.
 
 # Execution Engine
 
@@ -206,23 +216,23 @@ Making these changes:
 *rtl\core\neorv32_cpu.vhd*
 
 ```VHDL
-  -- Control Unit (Back-End / Instruction Execution) ----------------------------------------
-  -- -------------------------------------------------------------------------------------------
-  neorv32_cpu_control_inst: entity neorv32.neorv32_cpu_control
-    generic map (
-        ...
-    )
-    port map (
+-- Control Unit (Back-End / Instruction Execution) ----------------------------------------
+-- -------------------------------------------------------------------------------------------
+neorv32_cpu_control_inst: entity neorv32.neorv32_cpu_control
+generic map (
+    ...
+)
+port map (
 
-        ...
+    ...
 
-        -- [debug] - make instruction visible
-        debug_valid_i   => frontend.valid,       -- bus signals are valid
-        debug_instr_i   => frontend.instr,       -- instruction
+    -- [debug] - make instruction visible
+    debug_valid_i   => frontend.valid,       -- bus signals are valid
+    debug_instr_i   => frontend.instr,       -- instruction
 
-        ...
+    ...
 
-    );
+);
 ```
 
 *rtl\core\neorv32_cpu_control.vhd*
@@ -366,6 +376,8 @@ end
 
 It is not possible to achieve this in a single line.
 
+### Printing Objects
+
 write() is able to format objects to a string representation. This allows you to output vectors for example:
 
 ```
@@ -373,6 +385,43 @@ write(l, trap_ctrl.exc_buf);
 writeline(output, l);
 ```
 
+### Hexadecimal Format
+
+To print in hexadecimal format,
+
+```
+use std.textio.all;
+
+signal matrix_mar_store : std_ulogic_vector(XLEN-1 downto 0);
+
+write(l, "0x" & to_hstring(unsigned(matrix_mar_store)) & LF);
+writeline(output, l);
+```
+
+### Printing the integer datatype
+
+To print an integer, using integer'image(variable_name):
+
+```
+subtype matrix_ram_addr is integer range 0 to MLEN-1;
+
+...
+
+signal head : matrix_ram_addr;
+
+...
+
+write(l, "LOAD: 0x" & to_hstring(unsigned(data_out)) & " into head: " & integer'image(head));
+writeline(output, l);
+```
+
+### the report keyword
+
+Using report, it is also possible to print
+
+```
+report "a11: " & to_string(a11);
+```
 
 
 # Adding custom instructions
@@ -1219,9 +1268,13 @@ Check if it compiles still. (Expected output is the same as above)
 
 ```
 NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/NEORV32_MatrixExtension
+
 PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
 
 cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/add1
+cd /c/Users/lapto/dev/VHDL/NEORV32_MatrixExtension/sw/example/add1
+
 make all
 ```
 
@@ -1490,6 +1543,13 @@ int main() {
 Now rebuild the code.
 
 ```
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/NEORV32_MatrixExtension
+PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
+cd /c/Users/lapto/dev/VHDL/NEORV32_MatrixExtension/sw/example/add1
+make all
+```
+
+```
 NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
 PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
 cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/add1
@@ -1539,10 +1599,13 @@ It needs to be the funct7 of the custom add1 instruction!
 https://stnolting.github.io/neorv32/#_bootloader
 https://stnolting.github.io/neorv32/#_bootloader_rom_bootrom
 
-The bootloader is synthesized along with the CPU design, should it be located in neorv32_application_image.vhd.
-The make all build command will place the bootloader code into neorv32_application_image.vhd, more about that later.
+The bootloader is synthesized along with the CPU design, should it be located in neorv32_application_image.vhd. The ```make all``` build command will place the bootloader code into neorv32_application_image.vhd, more about that later.
 
-The bootloader is the first application that starts. In the case of the NEORV32 bootloader, it allows the user to connect via UART and waits for user input. The user is able to upload an application that the CPU will then execute. This is an advantage over synthesizing a new bitstream for every new application to execute. Instead of placing an application into neorv32_application_image.vhd, just place the bootloader into neorv32_application_image.vhd and upload the application via the bootloader instead. This saves time spent on synthesizing.
+The bootloader is the first application that starts. In the case of the NEORV32 bootloader, it allows the user to connect via UART (baudrate 19200) and waits for user input.
+
+![Bootloader_CommandLine.png](res/images/Bootloader_CommandLine.png)
+
+The user is able to upload an application that the CPU will then execute. This is an advantage over synthesizing a new bitstream for every new application to execute. Instead of placing an application into neorv32_application_image.vhd, just place the bootloader into neorv32_application_image.vhd and upload the application via the bootloader instead. This saves time spent on synthesizing.
 
 To build the bootloader, enter the /neorv32/sw/bootloader folder and execute the make all target.
 
@@ -2897,8 +2960,58 @@ The second option (RST_EN == true) generates the register file using flip-flops 
 TODO: create a bus request that contains the address of the first element, the stride and the run-width. The load store engine has to load all the data. The bus response has to contain all data.
 
 
+## Multiplying Matrix Registers
+
+First, you should read:
+
+https://nandland.com/vhdl-math-std_logic_arith-vs-numeric_std/
+
+Now, once you now that Numeric_std is the package to use over Std_logic_arith, you can reference this page https://nandland.com/common-vhdl-conversions/#Numeric-Std_Logic_Vector-To-Unsigned for all conversions.
 
 
+
+https://stackoverflow.com/questions/28779813/multiplication-of-two-different-bit-numbers-in-vhdl
+
+c <= std_logic_vector(unsigned(a) * unsigned(b));
+
+https://stackoverflow.com/questions/44574651/confusion-in-vhdl-code
+
+https://www.edaboard.com/threads/using-the-multiplier-operator-in-vhdl.233224/
+
+https://stackoverflow.com/questions/55622853/multiply-and-add-operators-in-vhdl
+
+Overflow Warning: "error: bound check failure"
+
+```
+.\neorv32_tb.exe:error: bound check failure at ../rtl/core/neorv32_cpu.vhd:250
+  instance: .neorv32_tb(neorv32_tb_rtl).neorv32_top_inst@neorv32_top(neorv32_top_rtl).core_complex_gen(0).neorv32_cpu_inst@neorv32_cpu(neorv32_cpu_rtl).proc_out_prod
+.\neorv32_tb.exe:error: simulation failed
+```
+
+This error is output if the destination register is too small to store the maximal number that can be created by the multiplication.
+
+In https://stackoverflow.com/questions/55622853/multiply-and-add-operators-in-vhdl it is stated:
+
+```
+c <= a * b;  -- Note 'c' is as wide as the sum of a's length and b's length
+```
+
+This means the destination register must be at least as wide as the sum of both source registers.
+
+Changing unsigned() to signed() does not get rid of the bounds check warning!
+
+https://www.klabs.org/mapld05/presento/189_lewis_p.pdf
+
+As stated in: https://stackoverflow.com/questions/40829073/signed-multiplication-result-trim
+it is possible to call the resize() function to just cut of MSBs!
+
+```
+PROC_OUT_PROD : process(clk_i)
+    variable l : line;
+begin
+    c <= resize(signed(matrix_ram_0(0)) * signed(matrix_ram_1(0)), 32);
+end process PROC_OUT_PROD;
+```
 
 # Cache (Bus Host)
 
@@ -3306,7 +3419,7 @@ int main() {
 }
 ```
 
-Here the 16 loads that are part of the burst are displayed as small green diamonds.
+Here the 16 loads that are part of the burst are displayed as small green diamonds. The inspected signal is neorv32_top_inst > core_complex_gen(0) > neorv32_dcache_enabled > neorv32_dcache_inst > neorv32_cache_memory_inst > rdata[32:0]
 
 ![image info](res/images/BurstLoad_1.png)
 
@@ -3478,6 +3591,13 @@ This means that overall DMA has two downsides
 1. DMA is implemented using custom API functions and not using RISC-V instructions. The matrix extension to the RISC-V standard will use RISC-V instructions. Intrinsics/API C-functions are not the primary result of the extension process.
 
 The idea of using DMA is not further investigated but may well be the better solution overall. Further investigation can be done if there is time left.
+
+
+
+
+
+
+
 
 # Trapattonization
 
