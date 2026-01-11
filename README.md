@@ -24,7 +24,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
 - [Tipps for Debugging using .vcd trace files](#tipps-for-debugging-using-vcd-trace-files)
     - [Finding the Simulation Time when an Instruction is executed](#finding-the-simulation-time-when-an-instruction-is-executed)
     - [Comparing two .vcd files](#comparing-two-vcd-files)
-    - [Printing Strings and Object](#printing-strings-and-object)
+    - [Printing Strings and Objects](#printing-strings-and-objects)
         - [Printing Objects](#printing-objects)
         - [Hexadecimal Format](#hexadecimal-format)
         - [Printing the integer datatype](#printing-the-integer-datatype)
@@ -40,7 +40,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Compiling](#compiling)
     - [Analysing the Assembly Listing](#analysing-the-assembly-listing)
     - [Initializing the C-runtime](#initializing-the-c-runtime)
-    - [Dealing with global variable](#dealing-with-global-variable)
+    - [Dealing with global variables](#dealing-with-global-variables)
     - [Symmetric Multi Processing, Hart 0 Check](#symmetric-multi-processing-hart-0-check)
     - [Summary](#summary)
     - [Write a simple main function](#write-a-simple-main-function)
@@ -51,6 +51,7 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
         - [In- and out-parameters](#in--and-out-parameters)
         - [Usage](#usage)
 - [The bootloader](#the-bootloader)
+    - [Uploading an Application using YAT](#uploading-an-application-using-yat)
 - [CFU vs. CFS - Extending the NEORV32 CPU](#cfu-vs-cfs---extending-the-neorv32-cpu)
     - [Extending the NEORV32 via the Custom Functions Unit CFU](#extending-the-neorv32-via-the-custom-functions-unit-cfu)
         - [Merge/Pull Request that added the CFU](#mergepull-request-that-added-the-cfu)
@@ -96,6 +97,8 @@ Auto Markdown TOC  v3.0.15 by Hunter Tran
     - [Bus Hosts](#bus-hosts)
 - [Burst Transfers for Bus Hosts](#burst-transfers-for-bus-hosts)
 - [DMA](#dma)
+- [Alignment Errors](#alignment-errors)
+- [Simulation in Vivado](#simulation-in-vivado)
 - [Trapattonization](#trapattonization)
 
 <!-- /TOC -->
@@ -132,6 +135,7 @@ Install Msys2. Inside the Msys2 console, install GHDL.
 ```
 cd /c/Users/lapto/dev/VHDL/neorv32/sim
 cd /c/Users/lapto/dev/VHDL/NEORV32_MatrixExtension/sim
+cd /c/Users/lapto/dev/VHDL/neorv32-setups/neorv32/sim
 sh ghdl.sh --stop-time=20us --vcd=neorv32.vcd
 ```
 
@@ -338,7 +342,7 @@ Now, open two instances of the surfer trace viewer and check the signals side-by
 
 This is in a sense a type of tool assisted debugging. Instead of just pondering about the code in the editor you visually compare images on the screen which is a task our brain excells in. Reasoning about code is far more difficult than the task of comparing images, especially as you need to keep a lot of context about the code in your memory when reading code. Comparing images is a local task which does not require a lot of context.
 
-## Printing Strings and Object
+## Printing Strings and Objects
 
 It is possible to print text to the console during simulation. Obviously, this feature is not part of the synthesisable subset of VHDL. The GHDL evaluator and simulator support this feature.
 
@@ -582,13 +586,63 @@ toolchain itself.
 
 The NEORV32 repository does not come with the cross compiler toolchain prepackaged. Therefore download a
 precompiled gcc toolchain from https://xpack-dev-tools.github.io/riscv-none-elf-gcc-xpack/
-more precicesly from the release page of the xpack project: https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases
+more precisely from the release page of the xpack project: https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases
 
-Next, install Msys2 if you have not already and open a Msys2 64 bit console.
+Next, install Msys2 from https://www.msys2.org/ if you have not already and open a ***Msys2 Mingw64*** 64 bit console.
+Inside Msys2, install the GNU compiler toolchain (See https://www.mingw-w64.org/getting-started/msys2/)
+
+Now, make sure you have opened a ***Msys2 Mingw64*** console and not the bash from the fork git client for example. The two bashes look the same but only the ***Msys2 Mingw64*** console has the gcc installed.
+
+![Msys2_Mingw64.png](res/images/Msys2_Mingw64.png)
+
+So the first thing to do is a sanity check for the gcc compiler. Open the Msys2 console and type:
+
+```
+$ gcc --version
+gcc.exe (Rev8, Built by MSYS2 project) 15.2.0
+Copyright (C) 2025 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+```
+
+You need to see some copyright notice and some version number, otherwise gcc is not installed or you are not using the correct console!
+
+Ok, gcc exists, now the second sanity check is to see if gcc is run in the correct console. Remember, you need to use the ***Msys2 Ming64*** console! It will not work in the Msys2 console and not in the bash of fork!
+
+Go into the image_gen folder and DO NOT update the path variable with the gcc cross-compiler! This step comes later! The next step is to compile the image_gen tool for the current operation system (Microsoft Windows) for which we need to use the native gcc compiler!
+
+```
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32-setups/neorv32
+# PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
+cd /c/Users/lapto/dev/VHDL/neorv32-setups/neorv32/sw/image_gen
+```
+The second line is commented out using a hashtag sign because the second line activates the RISC-V cross compiler which we do not want.
+
+No build the image_gen tool:
+
+```
+g++ image_gen.c -o image_gen.exe
+```
+
+Check inside the folder that there is a file called image_gen.
+
+In the case that gcc or g++ execute but do not print an error to the console and at the same time to not produce a .exe output file, there are two possible reasons for this.
+
+1. The tools are run in the wrong console. You need ***Msys2 Mingw64***
+2. You have update the path environment variable and the system calls the cross-compiler gcc/g++ instead of the native gcc/g++. The cross compilers will remain completely silent and they will just not produce an output for Microsoft Windows code!
+
+Next, once the image_gen.exe tool exists, it is time to build a cross-compiled example.
+
 Inside the console, export the *NEORV32_HOME* environment variable.
 
 ```
 NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32
+```
+
+or
+
+```
+NEORV32_HOME=/C/Users/lapto/dev/VHDL/neorv32-setups/neorv32
 ```
 
 Adjust the paths to your local situation. Copy and pasting my paths from this tutorial without
@@ -604,6 +658,7 @@ Enter one of the software example folders.
 
 ```
 cd /c/Users/lapto/dev/VHDL/neorv32/sw/example/demo_cfu
+cd /c/Users/lapto/dev/VHDL/neorv32-setups/neorv32/sw/example/hello_world
 ```
 
 Next let the makefile check if the cross compiling toolchain is setup correctly.
@@ -961,7 +1016,7 @@ the embedded variant of RISC-V since it will stop initializing registers after x
 if the symbol __riscv_32e is defined, because the embedded variants of RISC-V only
 contain the first 16 registers as opposed to all 32 registers!
 
-## Dealing with global variable
+## Dealing with global variables
 
 Disclaimer: I am not 100% certain how it really works but I have come up with this theory which I will believe in until prooven wrong.
 
@@ -1599,6 +1654,8 @@ It needs to be the funct7 of the custom add1 instruction!
 https://stnolting.github.io/neorv32/#_bootloader
 https://stnolting.github.io/neorv32/#_bootloader_rom_bootrom
 
+In order to facilitate uploading files, I have written an simple UART - Uploader: https://github.com/Thewbi/neorv_bootloader_app_uploader. There is an executable file under the releases section: https://github.com/user-attachments/files/24492554/upload_000.zip
+
 The bootloader is synthesized along with the CPU design, should it be located in neorv32_application_image.vhd. The ```make all``` build command will place the bootloader code into neorv32_application_image.vhd, more about that later.
 
 The bootloader is the first application that starts. In the case of the NEORV32 bootloader, it allows the user to connect via UART (baudrate 19200, 8-N-1) and waits for user input.
@@ -1611,7 +1668,7 @@ The full settings are:
 ![Bootloader_CommandLine.png](res/images/Bootloader_CommandLine.png)
 REMARK: The tool used in the screenshot is called YAT (Yet another terminal, https://sourceforge.net/projects/y-a-terminal/)
 
-If you have never heard about the term UART, here is a short rundown about UART. First of all, the purpose of a UART is to transmit serial data between two components. Serial data is bytes that are transmitted not in parallel but one byte at a time. No byte will be received before the byte before it unless a byte is lost, but then the information is scrambled anyways. UART itself stands for Universal Asynchronous Receive/Transmit and denotes that data can be sent in both directions between the two components in any direction at the same time and that there is no global clock that dictates when bytes are transmitted. Instead a UART requires the two components to synchronize on each transmitted byte. The speed in which data is sent (once the synchronization to that speed has been successfully established) is called the baudrate. baudrate loosly means how many byte are transferred per second. Both components need to use the same baudrate. Prominent baudrates are 115200 and 19200. The NEORV32 UART is confiured to use a baudrate of 19200. In your terminal emulator, you need to use that exact baudrate. If you only see scrambled output or get errors from your terminal emulator, try different baudrates or make sure that you are actually using the correct baudrate. If you use an incorrect baudrate, the emulator will receive broken data because it will scan the line on inopportun times and decode only incorrect bytes!
+If you have never heard about the term UART, here is a short rundown about UART. First of all, the purpose of a UART is to transmit serial data between two components. Serial data is bytes that are transmitted not in parallel but one byte at a time. No byte will be received before the byte before it unless a byte is lost, but then the information is scrambled anyways. UART itself stands for Universal Asynchronous Receive/Transmit and denotes that data can be sent in both directions between the two components in any direction at the same time and that there is no global clock that dictates when bytes are transmitted. Instead a UART requires the two components to synchronize on each transmitted byte. The speed in which data is sent (once the synchronization to that speed has been successfully established) is called the baudrate. baudrate loosly means how many bits are transferred per second. Both components need to use the same baudrate. Prominent baudrates are 115200 and 19200. The NEORV32 UART is confiured to use a baudrate of 19200. In your terminal emulator, you need to use that exact baudrate. If you only see scrambled output or get errors from your terminal emulator, try different baudrates or make sure that you are actually using the correct baudrate. If you use an incorrect baudrate, the emulator will receive broken data because it will scan the line on inopportun times and decode only incorrect bytes!
 
 Also the definition of a byte has to be agreed upon between the two components before hand. UART allows a byte to consist of between 5 and 9 bits as far as I know. You need to make sure that both components expect the same about of bits per byte. Another format field is the existence or absense of a parity bit and the amount of stop bits at the end of a byte. The amount of bits, the existence of a parity bit and the amount of stop bits is defined by a tripple. The most basic tripple is 8-N-1 which means eight data bits, no parity bit and 1 stop bit. The complete description of the UART connection in this case is then 19200 8-N-1. It is the baudrate plus the byte format tripple.
 
@@ -1631,7 +1688,7 @@ In the case of the NEORV32 CPU, the CPU provides a UART for a human to connect t
 
 The user is able to upload an application that the CPU will then execute. This is an advantage over synthesizing a new bitstream for every new application to execute. Instead of placing an application into neorv32_application_image.vhd, just place the bootloader into neorv32_application_image.vhd and upload the application via the bootloader instead. This saves time spent on synthesizing.
 
-To build the bootloader, enter the /neorv32/sw/bootloader folder and execute the make all target.
+To build the bootloader, enter the /neorv32/sw/bootloader folder and execute the ```make all``` target.
 
 Open an Msys2 console.
 
@@ -1689,6 +1746,20 @@ Here is the original description
 As neorv32_exe.bin file, use the neorv32_exe.bin file generated by the make all target. Do not upload .elf or .hex or any other file. Just upload the neorv32_exe.bin file. The make all target literally generates a neorv32_exe.bin for every example! Just upload that exact file.
 
 The neorv32_exe.bin file contains raw machine code without any container or metadata. This is the type of data that the bootloader can process.
+
+## Uploading an Application using YAT
+
+![YAT_SelectFileToUpload.png](res/images/YAT_SelectFileToUpload.png)
+
+The applications that really works are
+
+```
+C:\Users\lapto\dev\VHDL\neorv32-setups\neorv32\sw\example\demo_blink_led\neorv32_exe.bin
+C:\Users\lapto\dev\VHDL\neorv32-setups\neorv32\sw\example\hello_world\neorv32_exe.bin
+```
+
+The important part with YAT is that you need to turn the YAT terminal needs to be in Terminal Type: Binary mode in order to transmit the bytes correctly. For me the upload worked only if I turn the terminal to Binary type, then use the Reset button to reset the NEORV32 CPU on the ARtY A7 100T and then blindly insert u to upload a file. After uploading the file, you can return the terminal to Text type so you can read the output again. The response to the file upload needs to be OK. Then after the ok, type in e to run the executable.
+
 
 # CFU vs. CFS - Extending the NEORV32 CPU
 
@@ -2505,7 +2576,7 @@ Looking at the RISC-V "V" Vector Extension Version 1.0 document: https://github.
 
 > The number of bits in a single vector register, VLEN ≥ ELEN, which must be a power of 2, and must be no greater than 2^16.
 
-Each RISC-V CPU has a XLEN constant. XLEN dictates the bit width of the RISC-V chip. A VLEN of 32 says that all RV32 instructions are available. a VLEN of 64 adds the addw instruction for example which makes it possible to add 64 bit numbers.
+Each RISC-V CPU has a XLEN constant. XLEN dictates the bit width of the RISC-V chip. A XLEN of 32 says that all RV32 instructions are available. a XLEN of 64 adds the addw instruction for example which makes it possible to add 64 bit numbers.
 
 The V-Extension adds a new constant called VLEN. Similar to XLEN, VLEN dictates the width of the vector-registers in bits. A VLEN of 128 says that each vector-register is 128 bits wide.
 
@@ -2554,7 +2625,7 @@ Strip-mining requires a co-design between software (the assembler application) a
 
 1. The application may check if it is cheaper to compute the operation with or without the vector engine. Imagine that only one or two elements of the large vector are left at this point, then it might be cheaper to just use the ALU once or twice instead of loading the vector engine.
 
-1. If the application decides to use the Vector Engine instead of the ALU, then it continues the strip-mining loop. Otherwise it will jump to an end-label. (Optimizing compilers will structure for-loops in a different manner but the concept of terminating a loop is applied in all cases at this point)
+1. If the application decides to use the Vector Engine instead of the ALU, then it continues the strip-mining loop. Otherwise it will jump to an end-label. (Optimizing compilers will structure for-loops in a different manner but the concept of terminating a loop is applied in all cases at this point).
 
 1. The application specifies the remaining amount of elements in the vector/vectors that need processing. This value is called Application Vector Length (AVL). In the first iteration of strip-mining, AVL is the total length of the vector. As strip-mining processes batches, the AVL will get smaller and smaller by the batch-size each iteration until the vector is processed and the strip-mining loop terminates.
 
@@ -3618,7 +3689,1085 @@ The idea of using DMA is not further investigated but may well be the better sol
 
 
 
+# Alignment Errors
 
+The LSU (Load Store Unit) has an output port called err_o over which it signal alignment errors.
+
+The CPU-Control (neorv32_cpu_control_inst in neorv32_cpu.vhd) has an input port called lsu_err_i where the LSU err_o is connected to. This means the CPU-Control can check if the Load Store Unit has detected an alignment error.
+
+Inside the LSU, there are four combinational assignments:
+
+```
+-- output access/alignment errors to control unit --
+err_o(0) <= pending and exc_rd and misaligned; -- misaligned load
+err_o(1) <= pending and exc_rd and (dbus_rsp_i.err or pmp_err); -- load bus access error
+err_o(2) <= pending and exc_wr and misaligned; -- misaligned store
+err_o(3) <= pending and exc_wr and (dbus_rsp_i.err or pmp_err); -- store bus access error
+```
+
+```
+mem_addr_reg: process(rstn_i, clk_i)
+  begin
+    if (rstn_i = '0') then
+      mar        <= (others => '0');
+      misaligned <= '0';
+    elsif rising_edge(clk_i) then
+      if (ctrl_i.lsu_mo_we = '1') then
+        mar <= addr_i; -- memory address register
+        case ctrl_i.ir_funct3(1 downto 0) is -- alignment check
+          when "00"   => misaligned <= '0'; -- byte
+          when "01"   => misaligned <= addr_i(0); -- half-word
+          when others => misaligned <= addr_i(1) or addr_i(0); -- word
+        end case;
+      end if;
+    end if;
+  end process mem_addr_reg;
+```
+
+Theory: addr_i does not have two zeroes in the LSBs.
+It seems as if choosing funct3 to 0b010 causes the LSU to check for word aligned access which
+should be fine but for some reason the ALU will present the address 0x80000001 !?!
+
+
+
+# Simulation in Vivado
+
+The steps to create a Vivado project are described in great detail here: https://github.com/Thewbi/arty-a7/tree/main/projects/NEORV32_Setups
+
+First, fork the setup repository into your own github account so you can change the NEORV32 subproject used inside the setup project. https://github.com/stnolting/neorv32-setups.git
+
+The inside your fork, update the NEORV32 subproject to your own design.
+
+Using the TCL console of Vivado, execute the create_project.tcl script. https://github.com/stnolting/neorv32-setups/blob/main/vivado/arty-a7-test-setup/create_project.tcl. If you are using another Arty A7 such as the 100T instead of the 35T, change the FPGA product number inside the script.
+
+Once create_project.tcl has been executed, there will be a work folder which contains the vivado project (.xpr) open this project.
+
+Inside the .xpr Vivado project opened in the Vivado 2025.1 IDE, three files are missing to perform a simulation:
+
+![MissingXBusFiles.png](res/images/MissingXBusFiles.png)
+
+Add the three missing xbus files to the "Simulatio Only > sim_1 > VHDL > xil_defaultlib" node via Context Menu > Add Sources ...
+
+The next step is to add an application into the simulated NEORV32 CPU. The file that contains the application is C:/Users/lapto/dev/VHDL/neorv32-setups/neorv32/rtl/core/neorv32_bootloader_image.vhd.
+
+The easisest way is to open a MSYS2 console, cd into a folder that contains a test application, build that test application and then copy the generated neorv32_application_image.vhd file over.
+
+```
+PATH=/c/Users/lapto/Downloads/xpack-riscv-none-elf-gcc-14.2.0-3-win32-x64/xpack-riscv-none-elf-gcc-14.2.0-3/bin:$PATH
+cd /c/Users/lapto/dev/VHDL/neorv32-setups/neorv32/sw/example/add1
+make all
+```
+
+You need to be aware of the fact that there are two files:
+
+* neorv32_application_image.vhd
+* neorv32_bootloader_image.vhd
+
+The application goes into the application image file.
+
+For reference, the original bootloader app looks like this:
+
+```
+-- The NEORV32 RISC-V Processor
+-- Auto-generated memory image for internal BOOTROM
+-- Source: bootloader/build/main.bin
+-- Built: 03.09.2025 20:32:30
+
+library ieee;
+use ieee.std_logic_1164.all;
+
+package neorv32_bootloader_image is
+
+constant bootloader_image_size_c : natural := 3928;
+type rom_t is array (0 to 4095) of std_ulogic_vector(31 downto 0);
+constant bootloader_image_data_c : rom_t := (
+x"f14020f3",
+x"80200217",
+x"0fb20213",
+x"ff027113",
+x"80200197",
+x"7f018193",
+x"000022b7",
+x"80028293",
+x"30029073",
+x"00000317",
+x"0f030313",
+x"30531073",
+x"30401073",
+x"00001397",
+x"f2438393",
+x"80200417",
+x"fc440413",
+x"80200497",
+x"fbc48493",
+x"80200517",
+x"fb450513",
+x"80200597",
+x"fb458593",
+x"00000613",
+x"00000693",
+x"00000713",
+x"00000793",
+x"02008a63",
+x"00000797",
+x"01878793",
+x"30579073",
+x"30446073",
+x"30046073",
+x"0880006f",
+x"fff44737",
+x"00872103",
+x"00c72603",
+x"fff40737",
+x"00072223",
+x"0380006f",
+x"00838e63",
+x"00945c63",
+x"0003a783",
+x"00f42023",
+x"00438393",
+x"00440413",
+x"fedff06f",
+x"00b55863",
+x"00052023",
+x"00450513",
+x"ff5ff06f",
+x"00000617",
+x"79060613",
+x"80200197",
+x"72c18193",
+x"0ff0000f",
+x"0000100f",
+x"30029073",
+x"00000513",
+x"00000593",
+x"000600e7",
+x"30401073",
+x"34051073",
+x"00000517",
+x"01850513",
+x"30551073",
+x"00100073",
+x"10500073",
+x"ffdff06f",
+x"34041073",
+x"34202473",
+x"01f45413",
+x"02041663",
+x"34102473",
+x"00440413",
+x"34141073",
+x"34a02473",
+x"00347413",
+x"ffd40413",
+x"00040863",
+x"34102473",
+x"ffe40413",
+x"34141073",
+x"34002473",
+x"30200073",
+x"00000513",
+x"00008067",
+x"fffe07b7",
+x"0087a783",
+x"00000513",
+x"00e79713",
+x"00075e63",
+x"fff507b7",
+x"0007a703",
+x"00f71693",
+x"fe06dce3",
+x"0047a503",
+x"0ff57513",
+x"00008067",
+x"ff010113",
+x"00812423",
+x"00912223",
+x"00112623",
+x"00050493",
+x"00000413",
+x"fb9ff0ef",
+x"00440793",
+x"002787b3",
+x"fea78e23",
+x"00140413",
+x"00400793",
+x"fef414e3",
+x"00012783",
+x"00c12083",
+x"00812403",
+x"00f4a023",
+x"00000513",
+x"00412483",
+x"01010113",
+x"00008067",
+x"fffe07b7",
+x"0087a783",
+x"00e79713",
+x"02075c63",
+x"00a00793",
+x"00f51e63",
+x"fff507b7",
+x"0007a703",
+x"00c71693",
+x"fe06dce3",
+x"00d00713",
+x"00e7a223",
+x"fff507b7",
+x"0007a703",
+x"00c71693",
+x"fe06dce3",
+x"00a7a223",
+x"00008067",
+x"ff810113",
+x"00812023",
+x"00112223",
+x"00050413",
+x"00044503",
+x"00140413",
+x"00051a63",
+x"00412083",
+x"00012403",
+x"00810113",
+x"00008067",
+x"f8dff0ef",
+x"fe1ff06f",
+x"fdc10113",
+x"00812e23",
+x"00912c23",
+x"02112023",
+x"800004b7",
+x"00058413",
+x"0004a223",
+x"000500e7",
+x"02050663",
+x"ffe01537",
+x"ce450513",
+x"fa1ff0ef",
+x"00100793",
+x"02012083",
+x"01c12403",
+x"01812483",
+x"00078513",
+x"02410113",
+x"00008067",
+x"01410513",
+x"00012a23",
+x"00012823",
+x"00012623",
+x"000400e7",
+x"00a12223",
+x"01010513",
+x"000400e7",
+x"00a12023",
+x"00c10513",
+x"000400e7",
+x"01412603",
+x"b007c6b7",
+x"0de68693",
+x"00012703",
+x"00412783",
+x"00d60863",
+x"ffe01537",
+x"cf850513",
+x"f95ff06f",
+x"00e7e7b3",
+x"00a7e7b3",
+x"00012423",
+x"00000713",
+x"01012683",
+x"02d76063",
+x"f60798e3",
+x"00c12603",
+x"fff00713",
+x"04e60263",
+x"ffe01537",
+x"d0c50513",
+x"f61ff06f",
+x"f4079ae3",
+x"00810513",
+x"00e12023",
+x"000400e7",
+x"00c12683",
+x"00812603",
+x"00012703",
+x"00050793",
+x"00c686b3",
+x"00d12623",
+x"00c72023",
+x"00470713",
+x"fadff06f",
+x"ffe01537",
+x"d2050513",
+x"00f12023",
+x"00d4a223",
+x"eb9ff0ef",
+x"0ff0000f",
+x"0000100f",
+x"00012783",
+x"f11ff06f",
+x"ff410113",
+x"00812223",
+x"00050413",
+x"03000513",
+x"00112423",
+x"00912023",
+x"e45ff0ef",
+x"07800513",
+x"e3dff0ef",
+x"01c00493",
+x"00945733",
+x"ffe017b7",
+x"00f77713",
+x"f4878793",
+x"00e787b3",
+x"0007c503",
+x"ffc48493",
+x"e19ff0ef",
+x"ffc00793",
+x"fcf49ee3",
+x"00812083",
+x"00412403",
+x"00012483",
+x"00c10113",
+x"00008067",
+x"fff4c7b7",
+x"ffc7a583",
+x"ff87a503",
+x"ffc7a703",
+x"fee59ae3",
+x"00008067",
+x"fd410113",
+x"02112423",
+x"02512223",
+x"02612023",
+x"00712e23",
+x"00812c23",
+x"00a12a23",
+x"00b12823",
+x"00c12623",
+x"00d12423",
+x"00e12223",
+x"00f12023",
+x"34202473",
+x"800007b7",
+x"00778793",
+x"fffe0737",
+x"08f41e63",
+x"00872783",
+x"01079713",
+x"00075a63",
+x"fffc0737",
+x"00472783",
+x"0017c793",
+x"00f72223",
+x"fffe0437",
+x"00842783",
+x"00f79713",
+x"02075e63",
+x"f79ff0ef",
+x"00042783",
+x"0027d793",
+x"00a78533",
+x"00f537b3",
+x"00b787b3",
+x"f1402773",
+x"fff446b7",
+x"00371713",
+x"00d70733",
+x"fff00693",
+x"00d72023",
+x"00f72223",
+x"00a72023",
+x"01812403",
+x"02812083",
+x"02412283",
+x"02012303",
+x"01c12383",
+x"01412503",
+x"01012583",
+x"00c12603",
+x"00812683",
+x"00412703",
+x"00012783",
+x"02c10113",
+x"30200073",
+x"00872783",
+x"00e79713",
+x"04075863",
+x"ffe01537",
+x"d2450513",
+x"d39ff0ef",
+x"00040513",
+x"e8dff0ef",
+x"02000513",
+x"ce1ff0ef",
+x"34102573",
+x"e7dff0ef",
+x"02000513",
+x"cd1ff0ef",
+x"34a02573",
+x"e6dff0ef",
+x"02000513",
+x"cc1ff0ef",
+x"34302573",
+x"e5dff0ef",
+x"00a00513",
+x"cb1ff0ef",
+x"00800793",
+x"3007b073",
+x"fffe07b7",
+x"0087a783",
+x"01079713",
+x"00075863",
+x"fffc07b7",
+x"00100713",
+x"00e7a223",
+x"10500073",
+x"ffdff06f",
+x"fff807b7",
+x"0007a703",
+x"00d71693",
+x"fe06cce3",
+x"80000737",
+x"00e7a223",
+x"00008067",
+x"fff807b7",
+x"00a7a223",
+x"0007a703",
+x"fe074ee3",
+x"0047a503",
+x"0ff57513",
+x"00008067",
+x"ff810113",
+x"800007b7",
+x"00812023",
+x"0007a403",
+x"00112223",
+x"01045513",
+x"0ff57513",
+x"fc9ff0ef",
+x"00845513",
+x"0ff57513",
+x"fbdff0ef",
+x"0ff47513",
+x"00012403",
+x"00412083",
+x"00810113",
+x"fa9ff06f",
+x"fff80737",
+x"00072783",
+x"00d79693",
+x"fe06cce3",
+x"800007b7",
+x"00878793",
+x"00f72223",
+x"00008067",
+x"ff010113",
+x"00112623",
+x"00812423",
+x"00912223",
+x"00050493",
+x"fcdff0ef",
+x"00300513",
+x"f69ff0ef",
+x"f81ff0ef",
+x"00000413",
+x"00000513",
+x"f59ff0ef",
+x"00440793",
+x"002787b3",
+x"fea78e23",
+x"00140413",
+x"00400793",
+x"fef412e3",
+x"f21ff0ef",
+x"00012783",
+x"80000737",
+x"00c12083",
+x"00f4a023",
+x"00072783",
+x"00812403",
+x"00412483",
+x"00478793",
+x"00f72023",
+x"00000513",
+x"01010113",
+x"00008067",
+x"ff810113",
+x"00112223",
+x"00a12023",
+x"f59ff0ef",
+x"00012503",
+x"ef5ff0ef",
+x"00412083",
+x"00810113",
+x"ecdff06f",
+x"ff810113",
+x"00112223",
+x"f39ff0ef",
+x"00500513",
+x"ed5ff0ef",
+x"00000513",
+x"ecdff0ef",
+x"00a12023",
+x"ea9ff0ef",
+x"00412083",
+x"00012503",
+x"00810113",
+x"00008067",
+x"fffe07b7",
+x"0087a783",
+x"00100513",
+x"00d79713",
+x"06075463",
+x"ffc10113",
+x"00112023",
+x"fff807b7",
+x"0007a023",
+x"01900713",
+x"00e7a023",
+x"0ab00513",
+x"800007b7",
+x"00400737",
+x"00e7a023",
+x"f6dff0ef",
+x"00600513",
+x"f65ff0ef",
+x"f85ff0ef",
+x"00257793",
+x"fff00513",
+x"00078c63",
+x"00400513",
+x"f4dff0ef",
+x"f6dff0ef",
+x"01e51513",
+x"41f55513",
+x"00012083",
+x"00410113",
+x"00008067",
+x"00008067",
+x"ff410113",
+x"00812223",
+x"00112423",
+x"00a12023",
+x"00000413",
+x"00600513",
+x"f15ff0ef",
+x"e75ff0ef",
+x"00200513",
+x"e11ff0ef",
+x"e29ff0ef",
+x"00440793",
+x"002787b3",
+x"ffc7c503",
+x"dfdff0ef",
+x"dddff0ef",
+x"f11ff0ef",
+x"00157513",
+x"fe051ce3",
+x"80000737",
+x"00072783",
+x"00140413",
+x"00178793",
+x"00f72023",
+x"00400793",
+x"faf418e3",
+x"00812083",
+x"00412403",
+x"00c10113",
+x"00008067",
+x"800007b7",
+x"0047a783",
+x"ffc10113",
+x"00112023",
+x"00079e63",
+x"ffe01537",
+x"d3850513",
+x"a4dff0ef",
+x"97dff0ef",
+x"07900793",
+x"06f51463",
+x"00800793",
+x"3007b073",
+x"fffe07b7",
+x"0087a783",
+x"01079713",
+x"00075663",
+x"fffc07b7",
+x"0007a223",
+x"ffe01537",
+x"d5c50513",
+x"a15ff0ef",
+x"00000513",
+x"b69ff0ef",
+x"ffe01537",
+x"d6c50513",
+x"a01ff0ef",
+x"fff50737",
+x"00072783",
+x"fe07cee3",
+x"000027b7",
+x"80078793",
+x"00000713",
+x"30079073",
+x"34171073",
+x"30200073",
+x"00012083",
+x"00410113",
+x"00008067",
+x"ffe007b7",
+x"40078793",
+x"30579073",
+x"fffe07b7",
+x"0087a703",
+x"01071693",
+x"0006d863",
+x"fffc0737",
+x"00100693",
+x"00d72223",
+x"0087a703",
+x"00e71693",
+x"0406de63",
+x"fff50737",
+x"00072023",
+x"ffff7637",
+x"00009737",
+x"0007a683",
+x"5ff70713",
+x"00000793",
+x"a0060613",
+x"12d76c63",
+x"00000713",
+x"3fe00613",
+x"12f66c63",
+x"fff78793",
+x"00679793",
+x"01079793",
+x"00371713",
+x"01877713",
+x"0107d793",
+x"00e7e7b3",
+x"0017e793",
+x"fff50737",
+x"00f72023",
+x"fffe07b7",
+x"0087a703",
+x"00f71693",
+x"0206da63",
+x"fff4c737",
+x"fe072c23",
+x"fe072c23",
+x"0007a783",
+x"fff44737",
+x"0027d793",
+x"00f72023",
+x"00072223",
+x"08000793",
+x"30479073",
+x"00800793",
+x"3007a073",
+x"ffe01537",
+x"d7450513",
+x"8f9ff0ef",
+x"ffe01537",
+x"da050513",
+x"8edff0ef",
+x"fffe0437",
+x"00842783",
+x"00f79713",
+x"0c075c63",
+x"ffe01537",
+x"dac50513",
+x"8d1ff0ef",
+x"a8dff0ef",
+x"00042783",
+x"00279413",
+x"00f40433",
+x"00141413",
+x"00a404b3",
+x"0084b433",
+x"00b40433",
+x"fffe07b7",
+x"0087a783",
+x"00e79713",
+x"08075663",
+x"fff507b7",
+x"0007a703",
+x"00f71693",
+x"0606de63",
+x"ffe01537",
+x"0047a783",
+x"dd050513",
+x"881ff0ef",
+x"ffe01537",
+x"e0450513",
+x"875ff0ef",
+x"ffe01537",
+x"e1850513",
+x"869ff0ef",
+x"f98ff0ef",
+x"00050413",
+x"815ff0ef",
+x"00a00513",
+x"80dff0ef",
+x"07200793",
+x"06f41e63",
+x"ffe002b7",
+x"00028067",
+x"00c686b3",
+x"00178793",
+x"ec1ff06f",
+x"ffe70693",
+x"ffd6f693",
+x"00069863",
+x"0037d793",
+x"00170713",
+x"eb5ff06f",
+x"0017d793",
+x"ff5ff06f",
+x"9d5ff0ef",
+x"f685e2e3",
+x"00b41463",
+x"f4956ee3",
+x"00a00513",
+x"fb8ff0ef",
+x"ffe01537",
+x"ddc50513",
+x"ff4ff0ef",
+x"ffe005b7",
+x"ffe00537",
+x"5f858593",
+x"6cc50513",
+x"815ff0ef",
+x"f60510e3",
+x"d71ff0ef",
+x"f59ff06f",
+x"07500793",
+x"02f41663",
+x"ffe01537",
+x"e2050513",
+x"fc0ff0ef",
+x"ffe005b7",
+x"ffe00537",
+x"18c58593",
+x"15450513",
+x"fe0ff0ef",
+x"f2050ce3",
+x"00100073",
+x"06500793",
+x"00f41663",
+x"d31ff0ef",
+x"f25ff06f",
+x"07800793",
+x"fef404e3",
+x"06800793",
+x"00f41863",
+x"ffe01537",
+x"e4050513",
+x"f05ff06f",
+x"06900793",
+x"08f41663",
+x"ffe01537",
+x"ed050513",
+x"f64ff0ef",
+x"f1302573",
+x"8b9ff0ef",
+x"ffe01537",
+x"ed850513",
+x"f50ff0ef",
+x"fffe0437",
+x"00042503",
+x"8a1ff0ef",
+x"ffe01537",
+x"ee050513",
+x"f38ff0ef",
+x"30102573",
+x"88dff0ef",
+x"ffe01537",
+x"ee850513",
+x"f24ff0ef",
+x"fc002573",
+x"879ff0ef",
+x"ffe01537",
+x"ef050513",
+x"f10ff0ef",
+x"00842503",
+x"865ff0ef",
+x"ffe01537",
+x"ef850513",
+x"efcff0ef",
+x"00442503",
+x"851ff0ef",
+x"ffe01537",
+x"d7050513",
+x"e75ff06f",
+x"07300793",
+x"16f41863",
+x"800007b7",
+x"0047a403",
+x"00041863",
+x"ffe01537",
+x"f0050513",
+x"e55ff06f",
+x"b69ff0ef",
+x"00050863",
+x"ffe01537",
+x"ce450513",
+x"e41ff06f",
+x"ffe01537",
+x"f1050513",
+x"ea8ff0ef",
+x"00040513",
+x"ffcff0ef",
+x"ffe01537",
+x"f1850513",
+x"e94ff0ef",
+x"800004b7",
+x"0004a503",
+x"fe4ff0ef",
+x"ffe01537",
+x"f2c50513",
+x"e7cff0ef",
+x"dacff0ef",
+x"07900793",
+x"e0f510e3",
+x"ffe01537",
+x"f3850513",
+x"e64ff0ef",
+x"01045413",
+x"00140413",
+x"004007b7",
+x"00f4a023",
+x"fff40413",
+x"fff00713",
+x"06e41863",
+x"004007b7",
+x"00f4a023",
+x"0ff0000f",
+x"0000100f",
+x"0004a683",
+x"00000413",
+x"00c68793",
+x"00f4a023",
+x"00000793",
+x"80000737",
+x"00472703",
+x"08e46263",
+x"b007c537",
+x"0de50513",
+x"00f12023",
+x"00d4a023",
+x"00e12223",
+x"b21ff0ef",
+x"00412703",
+x"00070513",
+x"b15ff0ef",
+x"00012783",
+x"fff7c513",
+x"b09ff0ef",
+x"ffe01537",
+x"d2050513",
+x"d69ff06f",
+x"00600513",
+x"00f12023",
+x"a1dff0ef",
+x"97dff0ef",
+x"0d800513",
+x"919ff0ef",
+x"931ff0ef",
+x"8f5ff0ef",
+x"00012783",
+x"00f12023",
+x"a21ff0ef",
+x"00157513",
+x"00012783",
+x"fe0518e3",
+x"00010737",
+x"00e787b3",
+x"f45ff06f",
+x"00d12223",
+x"00042503",
+x"00a787b3",
+x"00f12023",
+x"aa5ff0ef",
+x"00412683",
+x"00012783",
+x"00440413",
+x"f55ff06f",
+x"06c00793",
+x"cef41ee3",
+x"ffe01537",
+x"ddc50513",
+x"d60ff0ef",
+x"ffe005b7",
+x"ffe00537",
+x"5f858593",
+x"6cc50513",
+x"d80ff0ef",
+x"cd9ff06f",
+x"52524507",
+x"445f524f",
+x"43495645",
+x"00000a45",
+x"00000000",
+x"52524507",
+x"535f524f",
+x"414e4749",
+x"45525554",
+x"0000000a",
+x"52524507",
+x"435f524f",
+x"4b434548",
+x"0a4d5553",
+x"00000000",
+x"000a4b4f",
+x"5245070a",
+x"5f524f52",
+x"45435845",
+x"4f495450",
+x"0000204e",
+x"65206f4e",
+x"75636578",
+x"6c626174",
+x"42202e65",
+x"20746f6f",
+x"77796e61",
+x"203f7961",
+x"6e2f7928",
+x"00000a29",
+x"746f6f42",
+x"20676e69",
+x"6d6f7266",
+x"00000020",
+x"0a2e2e2e",
+x"0000000a",
+x"4e0a0a0a",
+x"56524f45",
+x"42203233",
+x"6c746f6f",
+x"6564616f",
+x"75620a72",
+x"3a646c69",
+x"70655320",
+x"20332020",
+x"35323032",
+x"00000a0a",
+x"6f747541",
+x"6f6f622d",
+x"00000074",
+x"206e6920",
+x"2e733031",
+x"65725020",
+x"61207373",
+x"6b20796e",
+x"74207965",
+x"6261206f",
+x"2e74726f",
+x"0000000a",
+x"726f6241",
+x"2e646574",
+x"00000a0a",
+x"64616f4c",
+x"20676e69",
+x"6d6f7266",
+x"49505320",
+x"616c6620",
+x"40206873",
+x"30307830",
+x"30303034",
+x"2e2e3030",
+x"0000202e",
+x"65707954",
+x"27682720",
+x"726f6620",
+x"6c656820",
+x"000a2e70",
+x"3a444d43",
+x"0000203e",
+x"69617741",
+x"676e6974",
+x"6f656e20",
+x"32337672",
+x"6578655f",
+x"6e69622e",
+x"202e2e2e",
+x"00000000",
+x"69617641",
+x"6c62616c",
+x"4d432065",
+x"0a3a7344",
+x"48203a68",
+x"0a706c65",
+x"53203a69",
+x"65747379",
+x"6e69206d",
+x"720a6f66",
+x"6552203a",
+x"72617473",
+x"3a750a74",
+x"6c705520",
+x"2064616f",
+x"20616976",
+x"54524155",
+x"203a6c0a",
+x"20495053",
+x"73616c66",
+x"202d2068",
+x"64616f6c",
+x"203a730a",
+x"20495053",
+x"73616c66",
+x"202d2068",
+x"676f7270",
+x"0a6d6172",
+x"53203a65",
+x"74726174",
+x"65786520",
+x"61747563",
+x"0a656c62",
+x"45203a78",
+x"0a746978",
+x"00000000",
+x"3a565748",
+x"00002020",
+x"4b4c430a",
+x"0020203a",
+x"53494d0a",
+x"00203a41",
+x"5349580a",
+x"00203a41",
+x"434f530a",
+x"0020203a",
+x"53494d0a",
+x"00203a43",
+x"65206f4e",
+x"75636578",
+x"6c626174",
+x"000a2e65",
+x"74697257",
+x"00002065",
+x"74796220",
+x"74207365",
+x"6c66206f",
+x"20687361",
+x"00000040",
+x"7928203f",
+x"0a296e2f",
+x"00000000",
+x"73616c46",
+x"676e6968",
+x"202e2e2e",
+x"00000000",
+x"33323130",
+x"37363534",
+x"62613938",
+x"66656463",
+others => (others => '0')
+);
+
+end neorv32_bootloader_image;
+```
 
 
 
